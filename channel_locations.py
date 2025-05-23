@@ -1,20 +1,6 @@
 """
 Generate .locs files for each EDF recording by reordering channel locations
 based on your default template 'Standard-10-20-Cap19_thesis.locs'.
-
-Defaults assume:
-  - EDFs in: eeg-during-mental-arithmetic-tasks-1.0.0/
-  - Template locs: Standard-10-20-Cap19_thesis.locs
-  - Output folder: locs/
-
-Usage (no flags needed if you keep these names):
-  python generate_locs.py
-
-Or override paths:
-  python generate_locs.py \
-      --input-dir path/to/my_edfs \
-      --default-locs path/to/my_template.locs \
-      --output-dir path/to/my_output_folder
 """
 import os
 import argparse
@@ -24,30 +10,46 @@ import mne
 
 def load_default_locs(default_path):
     """
-    Load the default template .locs into a DataFrame.
-    Expects whitespace-delimited columns: orig_idx, theta, radius, name
+    Load the default .locs template into a DataFrame.
+    Expects: orig_idx, theta, radius, name separated by whitespace or tabs.
     """
-    return pd.read_csv(
+    df = pd.read_csv(
         default_path,
         sep=r"\s+",
         header=None,
         names=["orig_idx", "theta", "radius", "name"]
     )
+    # Keep original name and add a lowercase key for matching
+    df['name_lower'] = df['name'].str.lower()
+    return df
 
 
-def create_locs_for_edf(edf_path, default_df):
+def create_locs_for_edf(edf_path, template_df):
     """
-    Read channel names from the EDF and filter/reorder the template accordingly.
+    Read the EDF to get its channel names, then filter and reorder the template.
     Returns a DataFrame with columns: idx, theta, radius, name
     """
     raw = mne.io.read_raw_edf(edf_path, preload=False, verbose=False)
-    edf_channels = raw.ch_names
+    edf_ch = raw.ch_names
+    edf_lower = [ch.lower() for ch in edf_ch]
 
-    # Filter template to channels present in EDF and keep order
-    df = default_df[default_df['name'].isin(edf_channels)].copy()
-    # Assign new indices 1..N
-    df.insert(0, 'idx', range(1, len(df) + 1))
-    return df[['idx', 'theta', 'radius', 'name']]
+    # Find matching template rows (case-insensitive)
+    matched = template_df[template_df['name_lower'].isin(edf_lower)].copy()
+
+    # Warn about channels in EDF not found in template
+    missing = set(edf_ch) - set(matched['name'])
+    if missing:
+        print(f"⚠️  EDF {os.path.basename(edf_path)} has channels not in template: {sorted(missing)}")
+
+    if matched.empty:
+        raise ValueError(f"No channels from {edf_path} matched the template.")
+
+    # Assign new sequential indices
+    matched.reset_index(drop=True, inplace=True)
+    matched.insert(0, 'idx', range(1, len(matched) + 1))
+
+    # Output only the needed columns
+    return matched[['idx', 'theta', 'radius', 'name']]
 
 
 def write_locs(df, out_path):
@@ -59,7 +61,7 @@ def write_locs(df, out_path):
 
 def process_directory(input_dir, default_locs, output_dir):
     """
-    Generate .locs for every .edf in input_dir using the default template,
+    Generate .locs for every .edf in input_dir using default_locs,
     writing outputs to output_dir.
     """
     os.makedirs(output_dir, exist_ok=True)
