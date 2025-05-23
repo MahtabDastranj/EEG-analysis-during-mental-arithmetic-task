@@ -1,6 +1,8 @@
 """
 Generate .locs files for each EDF recording by reordering channel locations
 based on your default template 'Standard-10-20-Cap19_thesis.locs'.
+
+Ignores channels 'A2-A1' and 'ECG ECG', so output contains the remaining 19 channels.
 """
 import os
 import argparse
@@ -12,6 +14,7 @@ def load_default_locs(default_path):
     """
     Load the default .locs template into a DataFrame.
     Expects: orig_idx, theta, radius, name separated by whitespace or tabs.
+    Adds lowercase names for matching.
     """
     df = pd.read_csv(
         default_path,
@@ -19,36 +22,46 @@ def load_default_locs(default_path):
         header=None,
         names=["orig_idx", "theta", "radius", "name"]
     )
-    # Keep original name and add a lowercase key for matching
     df['name_lower'] = df['name'].str.lower()
     return df
 
 
 def create_locs_for_edf(edf_path, template_df):
     """
-    Read the EDF to get its channel names, then filter and reorder the template.
+    Read the EDF to get its channel names, exclude unwanted channels,
+    then filter and reorder the template accordingly.
     Returns a DataFrame with columns: idx, theta, radius, name
     """
     raw = mne.io.read_raw_edf(edf_path, preload=False, verbose=False)
     edf_ch = raw.ch_names
-    edf_lower = [ch.lower() for ch in edf_ch]
 
-    # Find matching template rows (case-insensitive)
+    # Channels to ignore (case-insensitive)
+    ignore = {'a2-a1', 'ecg ecg'}
+    # Identify present ignore channels
+    present_ignored = [ch for ch in edf_ch if ch.lower() in ignore]
+    if present_ignored:
+        print(f"ℹ️ Ignoring channels in {os.path.basename(edf_path)}: {present_ignored}")
+
+    # Filter out ignored channels
+    edf_filtered = [ch for ch in edf_ch if ch.lower() not in ignore]
+    edf_lower = [ch.lower() for ch in edf_filtered]
+
+    # Match template rows case-insensitively
     matched = template_df[template_df['name_lower'].isin(edf_lower)].copy()
 
-    # Warn about channels in EDF not found in template
-    missing = set(edf_ch) - set(matched['name'])
+    # Warn about channels in EDF (after ignore) not found in template
+    missing = set(edf_filtered) - set(matched['name'])
     if missing:
-        print(f"⚠️  EDF {os.path.basename(edf_path)} has channels not in template: {sorted(missing)}")
+        print(f"⚠️ EDF {os.path.basename(edf_path)} channels not in template: {sorted(missing)}")
 
-    if matched.empty:
-        raise ValueError(f"No channels from {edf_path} matched the template.")
+    # Check count: expect 19 channels
+    if len(matched) != 19:
+        print(f"⚠️ EDF {os.path.basename(edf_path)} yielded {len(matched)} channels (expected 19)")
 
-    # Assign new sequential indices
+    # Renumber sequentially
     matched.reset_index(drop=True, inplace=True)
     matched.insert(0, 'idx', range(1, len(matched) + 1))
 
-    # Output only the needed columns
     return matched[['idx', 'theta', 'radius', 'name']]
 
 
