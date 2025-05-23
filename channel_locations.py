@@ -2,7 +2,8 @@
 Generate .locs files for each EDF recording by reordering channel locations
 based on your default template 'Standard-10-20-Cap19_thesis.locs'.
 
-Ignores channels 'A2-A1' and 'ECG ECG', so output contains the remaining 19 channels.
+This version strips the 'EEG ' prefix from channel names before matching,
+and ignores 'A2-A1' & 'ECG ECG', ensuring you get the 19 remaining channels.
 """
 import os
 import argparse
@@ -13,7 +14,7 @@ import mne
 def load_default_locs(default_path):
     """
     Load the default .locs template into a DataFrame.
-    Expects: orig_idx, theta, radius, name separated by whitespace or tabs.
+    Expects whitespace-delimited columns: orig_idx, theta, radius, name
     Adds lowercase names for matching.
     """
     df = pd.read_csv(
@@ -28,29 +29,31 @@ def load_default_locs(default_path):
 
 def create_locs_for_edf(edf_path, template_df):
     """
-    Read the EDF to get its channel names, exclude unwanted channels,
-    then filter and reorder the template accordingly.
+    Read the EDF to get its channel names, strip any 'EEG ' prefix,
+    exclude unwanted channels, then filter and reorder the template.
     Returns a DataFrame with columns: idx, theta, radius, name
     """
     raw = mne.io.read_raw_edf(edf_path, preload=False, verbose=False)
-    edf_ch = raw.ch_names
+    raw_chs = raw.ch_names
 
-    # Channels to ignore (case-insensitive)
-    ignore = {'a2-a1', 'ecg ecg'}
-    # Identify present ignore channels
-    present_ignored = [ch for ch in edf_ch if ch.lower() in ignore]
+    # Strip 'EEG ' prefix if present
+    cleaned = [ch[4:] if ch.lower().startswith('eeg ') else ch for ch in raw_chs]
+
+    # Channels to ignore after stripping
+    ignore_lower = {'a2-a1', 'ecg ecg'}
+    present_ignored = [ch for ch in cleaned if ch.lower() in ignore_lower]
     if present_ignored:
         print(f"ℹ️ Ignoring channels in {os.path.basename(edf_path)}: {present_ignored}")
 
-    # Filter out ignored channels
-    edf_filtered = [ch for ch in edf_ch if ch.lower() not in ignore]
-    edf_lower = [ch.lower() for ch in edf_filtered]
+    # Keep only channels not in ignore list
+    filtered = [ch for ch in cleaned if ch.lower() not in ignore_lower]
+    filtered_lower = [ch.lower() for ch in filtered]
 
     # Match template rows case-insensitively
-    matched = template_df[template_df['name_lower'].isin(edf_lower)].copy()
+    matched = template_df[template_df['name_lower'].isin(filtered_lower)].copy()
 
-    # Warn about channels in EDF (after ignore) not found in template
-    missing = set(edf_filtered) - set(matched['name'])
+    # Warn about any filtered channels not found in template
+    missing = [ch for ch in filtered if ch not in matched['name'].tolist()]
     if missing:
         print(f"⚠️ EDF {os.path.basename(edf_path)} channels not in template: {sorted(missing)}")
 
