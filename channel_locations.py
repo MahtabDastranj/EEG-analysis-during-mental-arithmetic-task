@@ -54,11 +54,11 @@ def write_locs(df, out_path):
     df.to_csv(out_path, sep='\t', header=False, index=False)
 
 
-def process_directory(input_dir, default_locs_path, output_dir):
+def process_directory(input_dir, default_locs_path, locs):
     """
     Walk through input_dir, process all .edf files, and save .locs to output_dir.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(locs, exist_ok=True)
     default_df = load_default_locs(default_locs_path)
 
     for fname in sorted(os.listdir(input_dir)):
@@ -72,7 +72,7 @@ def process_directory(input_dir, default_locs_path, output_dir):
             continue
 
         base = os.path.splitext(fname)[0]
-        out_file = os.path.join(output_dir, f"{base}.locs")
+        out_file = os.path.join(locs, f"{base}.locs")
         write_locs(locs_df, out_file)
         print(f"✔ Generated: {out_file}")
 
