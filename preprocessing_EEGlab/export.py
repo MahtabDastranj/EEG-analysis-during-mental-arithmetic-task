@@ -1,51 +1,46 @@
-# ========================================================================
-# Batch export of EEG data + ICA activity, and ICA weights from EEGLAB
-# ========================================================================
-# This script:
-#   1. Loops through all .set files in a folder
-#   2. Exports EEG data and ICA activations to a text file
-#   3. Exports ICA weight matrix to a text file
-#
-# Notes:
-# - 'transpose','on' flips the matrix so that:
-#     * For data/ICA activity: rows = timepoints, columns = channels/components
-#       (easier to read in Python, samples along rows)
-#     * For ICA weights: rows = components, columns = channels
-#       (standard EEGLAB ICA weight layout)
-# ========================================================================
+import os
+import numpy as np
+import mne
+from scipy.io import loadmat
 
-# ----------- User settings -----------
-input_dir = 'C:\path\to\your\set\files'   # folder with .set files
-output_dir = 'C:\path\to\output\txt'      # folder for txt exports
-# -------------------------------------
+# Input folder with .set files and output folder for exported .txt
+input_dir = r"EEG-analysis-during-mental-arithmetic-task\Processed data\eeglab files"
+output_dir = r"EEG-analysis-during-mental-arithmetic-task\Processed data\exported"
+os.makedirs(output_dir, exist_ok=True)
 
-if ~exist(output_dir, 'dir'):
-    mkdir(output_dir);
-end
+# Collect all .set files in the input folder
+files = [f for f in os.listdir(input_dir) if f.endswith(".set")]
 
-files = dir(fullfile(input_dir, '*.set'));
+for fname in files:
+    filepath = os.path.join(input_dir, fname)
+    print(f"Processing {fname}...")
 
-[ALLEEG, EEG, CURRENTSET, ALLCOM] = eeglab; # start EEGLAB
+    # Load EEG data from .set file
+    raw = mne.io.read_raw_eeglab(filepath, preload=True)
 
-for i = 1:length(files)
-    fname = files(i).name;
-    fprintf('Processing %s...\n', fname);
+    # Export raw EEG data (timepoints × channels)
+    data = raw.get_data()
+    np.savetxt(os.path.join(output_dir, fname.replace(".set", "_data.txt")),
+               data.T, fmt="%.6f")
 
-    # Load dataset
-    EEG = pop_loadset('filename', fname, 'filepath', input_dir);
-    [ALLEEG, EEG, CURRENTSET] = eeg_store(ALLEEG, EEG, 0);
+    # Load ICA info directly from .set file (MATLAB struct inside)
+    mat = loadmat(filepath, simplify_cells=True)
+    if "EEG" in mat and "icaweights" in mat["EEG"]:
+        icaweights = mat["EEG"]["icaweights"]
+        icawinv = mat["EEG"]["icawinv"]
 
-    # 1. Export data and ICA activity
-    # 'transpose','on' ensures:
-    #   Rows = timepoints, Columns = channels + ICA components
-    out_data_file = fullfile(output_dir, [fname(1:end-4) '_dataICA.txt']);
-    pop_export(EEG, out_data_file, 'transpose', 'on', 'ica', 'on');
+        # Save ICA weights and inverse weights
+        np.savetxt(os.path.join(output_dir, fname.replace(".set", "_icaweights.txt")),
+                   icaweights, fmt="%.6f")
+        np.savetxt(os.path.join(output_dir, fname.replace(".set", "_icawinv.txt")),
+                   icawinv, fmt="%.6f")
 
-    # 2. Export ICA weight matrix
-    # 'transpose','on' ensures:
-    #   Rows = components, Columns = channels
-    out_weights_file = fullfile(output_dir, [fname(1:end-4) '_weights.txt']);
-    pop_export(EEG, out_weights_file, 'transpose', 'on', 'icaweights', 'on');
-end
+        # Compute ICA activations = icaweights × icasphere × data
+        sphere = mat["EEG"]["icasphere"]
+        ica_activity = icaweights @ sphere @ data
 
-fprintf('Done! All files exported to %s\n', output_dir);
+        # Save ICA activations (timepoints × components)
+        np.savetxt(os.path.join(output_dir, fname.replace(".set", "_ica_activity.txt")),
+                   ica_activity.T, fmt="%.6f")
+    else:
+        print(f"No ICA info found in {fname}")
