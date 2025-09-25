@@ -2,8 +2,8 @@ import os
 import numpy as np
 from scipy import signal
 
-base_dir = r'E:\\AUT\\thesis\\EEG-analysis-during-mental-arithmetic-task\\Processed data\\exported'
-output_dir = r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\features\STFT'
+base_dir = r'E:\AUT\thesis\files\Processed data\exported'
+output_dir = r'E:\AUT\thesis\files\features\STFT'
 
 # STFT parameters
 fs = 500
