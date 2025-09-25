@@ -1,9 +1,0 @@
-{
-  "file": "00_rest_processed_filtered_ICA.set",
-  "setname": "",
-  "sfreq": 500.0,
-  "n_channels": 19,
-  "n_times": 90001,
-  "ica_source": "not_found",
-  "debug": {}
-}
