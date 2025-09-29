@@ -1,137 +1,139 @@
-import numpy as np
 import os
-from scipy.signal import cwt, morlet2
+import numpy as np
+import fcwt
 import matplotlib.pyplot as plt
 
+base_dir = r'E:\AUT\thesis\files\Processed data\exported'
+output_dir = r'E:\AUT\thesis\files\features\fCWT'
 
-def extract_morlet_cwt_features(dir_path, fs, onset_time=10.0, fmin=1, fmax=100, n_cycles=7.0, time_step=0.005,
-                                average=True, plot_average=False):
-    """
-    Extracts features using Morlet CWT from multiple .txt EEG files in a directory, following the specified parameters.
+fs = 500
+onset_time = 10.0  # Trial onset (s)
+fmin, fmax = 0.5, 45
+n_cycles = 7.0  # Morlet wavelet cycles
+time_step = 0.005  # Time resolution (s)
+num_freqs = 50  # Number of frequencies (logarithmic)
 
-    Assumptions:
-    - Each .txt file contains a 1D EEG signal (loaded via np.loadtxt(file)).
-    - If the file loads as 2D, takes the first column as the signal.
-    - All signals have the same length and sampling rate fs.
-    - Trial onset is at 'onset_time' seconds from the start of the signal.
-    - Signal includes at least 10s before and 25s after onset.
-    - The 72 files may represent trials, participants, or task blocks; the code averages across all if average=True.
-    - No specific grouping for conditions/participants; modify the code if needed for subgroup averaging.
+freq_bands = {
+    'delta': (0.5, 4),
+    'theta': (4, 8),
+    'alpha': (8, 13),
+    'beta': (13, 30),
+    'gamma': (30, 45)
+}
 
-    Parameters:
-    - dir_path: Path to directory containing the .txt files.
-    - fs: Sampling frequency in Hz (must be provided, e.g., 200 Hz for 5ms native resolution).
-    - onset_time: Time in seconds from signal start to trial onset (default: 10s).
-    - fmin, fmax: Frequency range (1-100 Hz).
-    - n_cycles: Number of cycles for Morlet wavelet (7 as specified).
-    - time_step: Desired time resolution in seconds (0.005s = 5ms).
-    - average: If True, average power across all files (as per "averaged for each task condition").
-    - plot_average: If True and average=True, plots the average scalogram.
 
-    Returns:
-    - If average=True: average_power (freqs x times), freqs, times
-    - Else: list of powers (each freqs x times), freqs, times
+def fcwt_features(file_path, fs, onset_time, fmin, fmax, n_cycles, time_step, num_freqs, freq_bands, plot=False):
+    data = np.loadtxt(file_path).T  # Shape: (19, 90001)
+    if data.ndim == 1:
+        data = data[np.newaxis, :]
+    num_channels, num_samples = data.shape
 
-    Raises:
-    - ValueError: If no files found, invalid parameters, or signals too short.
+    # Crop to -10s to +25s
+    onset_idx = int(onset_time * fs)
+    start_idx = max(0, onset_idx - int(10 * fs))  # -10s
+    end_idx = onset_idx + int(25 * fs) + 1  # +25s
+    if end_idx > num_samples:
+        raise ValueError(f"Signal too short in {file_path}; needs {end_idx} samples.")
+    data = data[:, start_idx:end_idx]  # Shape: (19, samples)
 
-    Example usage:
-    >>> average_power, freqs, times = extract_morlet_cwt_features('/path/to/your/directory', fs=200.0, plot_average=True)
-    """
-    # Input validation
-    if not os.path.isdir(dir_path):
-        raise ValueError("Provided dir_path is not a valid directory.")
-    if fs <= 0:
-        raise ValueError("Sampling frequency fs must be positive.")
-    if fmin <= 0 or fmax <= fmin:
-        raise ValueError("Invalid frequency range.")
-    if n_cycles < 1:
-        raise ValueError("n_cycles should be at least 1 (typically 7 for Morlet).")
-    if time_step <= 0:
-        raise ValueError("time_step must be positive.")
+    # Frequencies: Logarithmic spacing
+    freqs = np.logspace(np.log10(fmin), np.log10(fmax), num_freqs)
 
-    # Get all .txt files
-    txt_files = [f for f in os.listdir(dir_path) if f.endswith('.txt')]
-    if len(txt_files) == 0:
-        raise ValueError("No .txt files found in the directory.")
-    print(f"Found {len(txt_files)} .txt files.")
+    # Morlet wavelet
+    omega0 = n_cycles
+    dt = 1.0 / fs
 
-    # Frequencies: 1 to 100 Hz in 1 Hz steps
-    freqs = np.arange(fmin, fmax + 1)
+    # Time decimation
+    decim = max(1, round(time_step / dt))
+    actual_time_step = decim * dt
+    times = np.arange((end_idx - start_idx) // decim) * actual_time_step - 10.0
 
-    # Morlet parameter w = n_cycles
-    w = n_cycles
+    # Initialize fCWT
+    morlet = fcwt.Morlet(omega0)
+    fwt = fcwt.FCWT(morlet, fs, fmin, fmax, num_freqs, True)  # Complex output
 
-    # Central frequency for scale calculation
-    central_freq = (w + np.sqrt(2 + w ** 2)) / (4 * np.pi)
+    features = []
+    for ch in range(num_channels):
+        sig = data[ch, :].astype(np.float32)  # fcwt requires float32
 
-    # Scales corresponding to frequencies
-    scales = central_freq * fs / freqs
-
-    # Decimation step for desired time resolution
-    input_dt = 1.0 / fs
-    decim = max(1, round(time_step / input_dt))
-    actual_time_step = decim * input_dt
-    print(f"Using decim={decim}, actual time step: {actual_time_step:.4f} s")
-
-    # Process each file
-    powers = []
-    for file in txt_files:
-        file_path = os.path.join(dir_path, file)
+        # Compute fCWT
+        n_samples = len(sig)
+        output = np.zeros((num_freqs, n_samples), dtype=np.complex64)
         try:
-            signal = np.loadtxt(file_path)
-            if signal.ndim == 2:
-                signal = signal[:, 0]  # Assume first column is the signal
-            elif signal.ndim != 1:
-                raise ValueError(f"Invalid signal dimension in {file}.")
+            fwt.cwt(sig, fcwt.SINGLE, output)
         except Exception as e:
-            print(f"Error loading {file}: {e}")
-            continue
+            raise RuntimeError(f"fCWT failed for channel {ch}: {e}")
 
-        # Crop to -10s to +25s around onset
-        onset_idx = int(onset_time * fs)
-        start_idx = max(0, onset_idx - int(10 * fs))
-        end_idx = onset_idx + int(25 * fs) + 1  # Inclusive
-        if end_idx > len(signal):
-            print(f"Warning: Signal in {file} too short; skipping.")
-            continue
-
-        signal_crop = signal[start_idx:end_idx]
-
-        # Perform CWT
-        try:
-            coef = cwt(signal_crop, lambda M: morlet2(M, s=1.0, w=w), scales)
-        except Exception as e:
-            print(f"Error during CWT for {file}: {e}")
-            continue
-
-        # Power
-        power = np.abs(coef) ** 2
+        # Power spectrogram
+        power = np.abs(output) ** 2  # Shape: (num_freqs, n_samples)
 
         # Downsample time axis
-        power_down = power[:, ::decim]
+        power_down = power[:, ::decim]  # Shape: (num_freqs, n_times)
 
-        powers.append(power_down)
+        # Average power over time
+        avg_power = np.mean(power_down, axis=1)  # Shape: (num_freqs,)
 
-    if len(powers) == 0:
-        raise ValueError("No valid signals processed.")
+        # Extract band powers
+        ch_features = []
+        for band, (low, high) in freq_bands.items():
+            idx = np.logical_and(freqs >= low, freqs < high)
+            if np.any(idx):
+                band_power = np.mean(avg_power[idx])
+            else:
+                band_power = 0.0
+            ch_features.append(band_power)
 
-    # Times relative to onset (for the downsampled TFR)
-    num_times = powers[0].shape[1]  # Assume all same shape
-    times = np.arange(num_times) * actual_time_step - 10.0
+        features.extend(ch_features)
 
-    if average:
-        # Average across files (or trials/participants)
-        average_power = np.mean(powers, axis=0)
-        if plot_average:
+        # Optional plot for first channel
+        if plot and ch == 0:
             plt.figure(figsize=(12, 6))
-            extent = [times[0], times[-1], freqs[0], freqs[-1]]
-            plt.imshow(average_power, extent=extent, cmap='jet', aspect='auto', origin='lower')
-            plt.colorbar(label='Average Power')
+            extent = [times[0], times[-1], fmin, fmax]
+            plt.imshow(power_down, extent=extent, cmap='jet', aspect='auto', origin='lower')
+            plt.yscale('log')
+            plt.colorbar(label='Power')
             plt.xlabel('Time (s) relative to onset')
             plt.ylabel('Frequency (Hz)')
-            plt.title('Average Morlet CWT Scalogram across Files')
+            plt.title(f'Morlet fCWT Scalogram - Channel 0 ({os.path.basename(file_path)})')
             plt.show()
-        return average_power, freqs, times
-    else:
-        return powers, freqs, times
+
+    return np.array(features)  # Shape: (19 * 5,)
+
+
+# Iterate over subfolders
+rest_count, task_count = 0, 0
+for folder_name in os.listdir(base_dir):
+    folder_path = os.path.join(base_dir, folder_name)
+    if os.path.isdir(folder_path):
+        data_file = os.path.join(folder_path, 'data.txt')
+        if os.path.exists(data_file):
+            print(f"Processing folder: {folder_name} (using {data_file})...")
+
+            # Extract features
+            try:
+                feats = fcwt_features(data_file, fs, onset_time, fmin, fmax, n_cycles, time_step, num_freqs, freq_bands)
+            except Exception as e:
+                print(f"Error processing {data_file}: {e}")
+                continue
+
+            # Determine output directory
+            if 'rest' in folder_name.lower():
+                out_dir = os.path.join(output_dir, 'rest')
+                rest_count += 1
+            else:
+                out_dir = os.path.join(output_dir, 'task')
+                task_count += 1
+
+            os.makedirs(out_dir, exist_ok=True)
+
+            # Save features
+            csv_filename = f"{folder_name}.csv"
+            csv_path = os.path.join(out_dir, csv_filename)
+            np.savetxt(csv_path, feats, delimiter=',', fmt='%.6f')
+            print(f"Saved features to {csv_path}")
+        else:
+            print(f"Warning: 'data.txt' not found in {folder_name}")
+
+print(f"Processed {rest_count} rest files and {task_count} task files.")
+if rest_count != 36 or task_count != 36:
+    print(f"Warning: Expected 36 rest and 36 task files; found {rest_count} rest and {task_count} task.")
