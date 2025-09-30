@@ -1,11 +1,10 @@
 import os
 import numpy as np
-from scipy.signal import cwt, morlet2
+import pywt
+import fcwt
 
-base_dir   = r'E:\AUT\thesis\files\Processed data\exported'
+base_dir = r'E:\AUT\thesis\files\Processed data\exported'
 output_dir = r'E:\AUT\thesis\files\features\CWT'
-
-
 
 fs = 500.0
 fmin, fmax = 0.5, 45.0
@@ -50,16 +49,25 @@ def cone_of_influence_mask(n_samples, scales):
         mask[i, :] = left_ok & right_ok
     return mask
 
-def cwt_power_db_1d(x, fs, freqs_hz, omega0):
+def cwt_power_db_1d(x, fs, freqs_hz, omega0=6.0):
     """
-    Compute Morlet CWT power in dB for one 1D signal x (length N).
-    Returns: power_db (n_freqs, N)
+    Compute Morlet CWT power in dB for one 1D signal using PyWavelets.
+    freqs_hz: array of target frequencies in Hz
+    fs: sampling rate
+    omega0 is kept for API symmetry but not directly used in 'cmor'.
     """
-    scales = scales_from_frequencies(freqs_hz, fs, omega0)
-    # SciPy cwt: widths=scales, wavelet returns the wavelet array for given (M, s)
-    W = cwt(x, lambda M, s: morlet2(M, s, w=omega0), scales)  # complex
-    power = np.abs(W) ** 2
-    power_db = 10.0 * np.log10(power + EPS)
+    dt = 1.0 / fs
+
+    # Convert desired frequencies -> scales
+    # In PyWavelets: scale = center_freq / (freq * dt)
+    # center_freq for cmor1.5-1.0 is ~1.0 (PyWavelets convention)
+    wavelet = 'cmor1.5-1.0'
+    center_freq = pywt.central_frequency(wavelet)
+    scales = center_freq / (freqs_hz * dt)
+
+    coeffs, freqs = pywt.cwt(x, scales, wavelet, sampling_period=dt)
+    power = np.abs(coeffs) ** 2
+    power_db = 10.0 * np.log10(power + 1e-12)
     return power_db
 
 def bandpower_db_from_cwt(power_db, freqs_hz, coi_mask, band_lo, band_hi):
