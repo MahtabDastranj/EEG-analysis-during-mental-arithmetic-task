@@ -74,12 +74,6 @@ def cwt_power_db_1d(x, fs, freqs_hz, omega0=6.0):
 
 
 def bandpower_db_from_cwt(power_db, freqs_hz, coi_mask, band_lo, band_hi):
-    """
-    Compute band power (dB) by:
-      1) For each frequency row, average over time using only COI-valid samples.
-      2) Average the resulting 1D freq profile across the band.
-    Returns a scalar (float).
-    """
     fmask = (freqs_hz >= band_lo) & (freqs_hz <= band_hi)
     if not np.any(fmask):
         return 0.0
@@ -102,14 +96,7 @@ def bandpower_db_from_cwt(power_db, freqs_hz, coi_mask, band_lo, band_hi):
     return float(np.mean(freq_means))
 
 
-def cwt_features(file_path, fs, fmin, fmax, voices_per_oct, omega0, freq_bands):
-    """
-    Load data.txt, shape to (channels, samples), mean-center per channel,
-    compute Morlet CWT power (dB), COI-masked, and extract band powers per channel.
-    Returns a flat feature vector of length (n_channels * n_bands) in the
-    band order defined by 'freq_bands'.
-    """
-    # Your files are (samples, channels); you used .T previously to get (channels, samples)
+def cwt_features(file_path, fs, fmin, fmax, voices_per_oct, w0, freq_bands):
     data = np.loadtxt(file_path).T  # -> (channels, samples)
     if data.ndim == 1:
         data = data[np.newaxis, :]
@@ -121,13 +108,13 @@ def cwt_features(file_path, fs, fmin, fmax, voices_per_oct, omega0, freq_bands):
 
     # Prepare frequency grid, scales, and COI mask
     freqs = logspace_frequencies(fmin, fmax, voices_per_oct)
-    scales = scales_from_frequencies(freqs, fs, omega0)
+    scales = scales_from_frequencies(freqs, fs, w0)
     coi_mask = cone_of_influence_mask(n_samples, scales)
 
     features = []
     for ch in range(n_channels):
         x = data[ch, :]
-        power_db = cwt_power_db_1d(x, fs, freqs, omega0)
+        power_db = cwt_power_db_1d(x, fs, freqs, w0)
 
         # For each band, compute COI-aware band power (dB)
         for band_name, (lo, hi) in freq_bands.items():
@@ -155,7 +142,7 @@ for folder_name in os.listdir(base_dir):
         fs=fs,
         fmin=fmin, fmax=fmax,
         voices_per_oct=voices_per_oct,
-        omega0=omega0,
+        w0=omega0,
         freq_bands=freq_bands
     )
 
