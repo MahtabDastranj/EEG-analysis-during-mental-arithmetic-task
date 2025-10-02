@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import pywt
-import fcwt
 
 base_dir = r'E:\AUT\thesis\files\Processed data\exported'
 output_dir = r'E:\AUT\thesis\files\features\CWT'
@@ -20,12 +19,13 @@ freq_bands = {
     'gamma': (30, 45)
 }
 
-# ---------------------- Helpers ----------------------
+
 def logspace_frequencies(fmin, fmax, voices_per_oct):
     """Log-spaced frequency vector with 'voices_per_oct' points per octave."""
     n_oct = np.log2(fmax / fmin)
     n = int(np.floor(n_oct * voices_per_oct)) + 1
     return fmin * (2.0 ** (np.arange(n) / voices_per_oct))
+
 
 def scales_from_frequencies(freqs_hz, fs, omega0):
     """
@@ -33,6 +33,7 @@ def scales_from_frequencies(freqs_hz, fs, omega0):
       f_c(Hz) = (omega0 * fs) / (2*pi*s)  =>  s = (omega0 * fs) / (2*pi*f_c)
     """
     return (omega0 * fs) / (2.0 * np.pi * freqs_hz)
+
 
 def cone_of_influence_mask(n_samples, scales):
     """
@@ -48,6 +49,7 @@ def cone_of_influence_mask(n_samples, scales):
         right_ok = (n_samples - 1 - t) >= te
         mask[i, :] = left_ok & right_ok
     return mask
+
 
 def cwt_power_db_1d(x, fs, freqs_hz, omega0=6.0):
     """
@@ -69,6 +71,7 @@ def cwt_power_db_1d(x, fs, freqs_hz, omega0=6.0):
     power = np.abs(coeffs) ** 2
     power_db = 10.0 * np.log10(power + 1e-12)
     return power_db
+
 
 def bandpower_db_from_cwt(power_db, freqs_hz, coi_mask, band_lo, band_hi):
     """
@@ -97,6 +100,7 @@ def bandpower_db_from_cwt(power_db, freqs_hz, coi_mask, band_lo, band_hi):
 
     # Average across frequencies in band
     return float(np.mean(freq_means))
+
 
 def cwt_features(file_path, fs, fmin, fmax, voices_per_oct, omega0, freq_bands):
     """
@@ -132,7 +136,7 @@ def cwt_features(file_path, fs, fmin, fmax, voices_per_oct, omega0, freq_bands):
 
     return np.array(features, dtype=float)
 
-# ---------------------- Batch over folders (same logic you used) ----------------------
+
 for folder_name in os.listdir(base_dir):
     folder_path = os.path.join(base_dir, folder_name)
     if not os.path.isdir(folder_path):
@@ -155,7 +159,6 @@ for folder_name in os.listdir(base_dir):
         freq_bands=freq_bands
     )
 
-    # Decide output subdir (task/rest) by folder name — same heuristic you used
     if 'rest' in folder_name.lower():
         out_dir = os.path.join(output_dir, 'rest')
     else:
@@ -163,7 +166,6 @@ for folder_name in os.listdir(base_dir):
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # Save features to CSV with folder name as filename
     csv_filename = f"{folder_name}.csv"
     csv_path = os.path.join(out_dir, csv_filename)
     np.savetxt(csv_path, feats, delimiter=',', fmt='%.6f')
