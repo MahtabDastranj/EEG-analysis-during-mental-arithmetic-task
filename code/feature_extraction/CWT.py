@@ -8,7 +8,7 @@ output_dir = r'E:\AUT\thesis\files\features\CWT'
 fs = 500.0
 fmin, fmax = 0.5, 45.0
 voices_per_oct = 12            # 8–16 typical; 12 is a good default for EEG
-omega0 = 6.0                   # Morlet central angular frequency (cycles ~6)
+w0 = 6.0                   # Morlet central angular frequency (cycles ~6)
 EPS = 1e-12                    # numerical floor for log
 
 freq_bands = {
@@ -21,26 +21,16 @@ freq_bands = {
 
 
 def logspace_frequencies(fmin, fmax, voices_per_oct):
-    """Log-spaced frequency vector with 'voices_per_oct' points per octave."""
     n_oct = np.log2(fmax / fmin)
     n = int(np.floor(n_oct * voices_per_oct)) + 1
     return fmin * (2.0 ** (np.arange(n) / voices_per_oct))
 
 
-def scales_from_frequencies(freqs_hz, fs, omega0):
-    """
-    SciPy morlet2 uses 's' in *samples*. For Morlet:
-      f_c(Hz) = (omega0 * fs) / (2*pi*s)  =>  s = (omega0 * fs) / (2*pi*f_c)
-    """
-    return (omega0 * fs) / (2.0 * np.pi * freqs_hz)
+def scales_from_frequencies(freqs_hz, fs, w0):
+    return (w0 * fs) / (2.0 * np.pi * freqs_hz)
 
 
 def cone_of_influence_mask(n_samples, scales):
-    """
-    COI mask: True where reliable. For Morlet, e-folding time of energy ~ t_e = sqrt(2)*s (samples).
-    We mark as invalid any time indices within t_e of the edges (per frequency row).
-    Returns: mask shape (n_freqs, n_samples)
-    """
     t = np.arange(n_samples)
     mask = np.ones((len(scales), n_samples), dtype=bool)
     for i, s in enumerate(scales):
@@ -51,13 +41,7 @@ def cone_of_influence_mask(n_samples, scales):
     return mask
 
 
-def cwt_power_db_1d(x, fs, freqs_hz, omega0=6.0):
-    """
-    Compute Morlet CWT power in dB for one 1D signal using PyWavelets.
-    freqs_hz: array of target frequencies in Hz
-    fs: sampling rate
-    omega0 is kept for API symmetry but not directly used in 'cmor'.
-    """
+def cwt_power_db_1d(x, fs, freqs_hz, w0=6.0):
     dt = 1.0 / fs
 
     # Convert desired frequencies -> scales
@@ -142,7 +126,7 @@ for folder_name in os.listdir(base_dir):
         fs=fs,
         fmin=fmin, fmax=fmax,
         voices_per_oct=voices_per_oct,
-        w0=omega0,
+        w0=w0,
         freq_bands=freq_bands
     )
 
