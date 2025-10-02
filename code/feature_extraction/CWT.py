@@ -7,10 +7,9 @@ output_dir = r'E:\AUT\thesis\files\features\CWT'
 
 fs = 500.0
 fmin, fmax = 0.5, 45.0
-voices_per_oct = 12
-EPS = 1e-12
-
-WAVELET = 'cmor1.5-1.0'
+voices_per_oct = 12            # 8–16 typical; 12 is a good default for EEG
+w0 = 6.0                   # Morlet central angular frequency (cycles ~6)
+EPS = 1e-12                    # numerical floor for log
 
 freq_bands = {
     'delta': (0.5, 4),
@@ -27,11 +26,8 @@ def logspace_frequencies(fmin, fmax, voices_per_oct):
     return fmin * (2.0 ** (np.arange(n) / voices_per_oct))
 
 
-def cwt_scales_for_freqs(freqs_hz, fs, wavelet=WAVELET):
-    """ s = fc / (f * dt)."""
-    dt = 1.0 / fs
-    fc = pywt.central_frequency(wavelet)
-    return fc / (freqs_hz * dt)
+def scales_from_frequencies(freqs_hz, fs, w0):
+    return (w0 * fs) / (2.0 * np.pi * freqs_hz)
 
 
 def cone_of_influence_mask(n_samples, scales):
@@ -45,11 +41,19 @@ def cone_of_influence_mask(n_samples, scales):
     return mask
 
 
-def cwt_power_db_1d(x, fs, scales, wavelet=WAVELET):
+def cwt_power_db_1d(x, fs, freqs_hz, w0=6.0):
     dt = 1.0 / fs
-    coeffs, _ = pywt.cwt(x, scales, wavelet, sampling_period=dt)
+
+    # Convert desired frequencies -> scales
+    # In PyWavelets: scale = center_freq / (freq * dt)
+    # center_freq for cmor1.5-1.0 is ~1.0 (PyWavelets convention)
+    wavelet = 'cmor1.5-1.0'
+    center_freq = pywt.central_frequency(wavelet)
+    scales = center_freq / (freqs_hz * dt)
+
+    coeffs, freqs = pywt.cwt(x, scales, wavelet, sampling_period=dt)
     power = np.abs(coeffs) ** 2
-    power_db = 10.0 * np.log10(power + EPS)
+    power_db = 10.0 * np.log10(power + 1e-12)
     return power_db
 
 
@@ -58,40 +62,43 @@ def bandpower_db_from_cwt(power_db, freqs_hz, coi_mask, band_lo, band_hi):
     if not np.any(fmask):
         return 0.0
 
-    # Average over valid time samples, per frequency row
-    row_means = []
+    # Average over time with COI mask, per frequency
+    freq_means = []
     for i, use in enumerate(fmask):
         if not use:
             continue
-        vals = power_db[i, coi_mask[i, :]]
+        row = power_db[i, :]
+        valid = coi_mask[i, :]
+        vals = row[valid]
         if vals.size == 0:
             continue
-        row_means.append(np.mean(vals))
-
-    if len(row_means) == 0:
+        freq_means.append(np.mean(vals))
+    if len(freq_means) == 0:
         return 0.0
-    return float(np.mean(row_means))
+
+    # Average across frequencies in band
+    return float(np.mean(freq_means))
 
 
-def cwt_features(file_path, fs, fmin, fmax, voices_per_oct, freq_bands, wavelet=WAVELET):
+def cwt_features(file_path, fs, fmin, fmax, voices_per_oct, w0, freq_bands):
     data = np.loadtxt(file_path).T  # -> (channels, samples)
     if data.ndim == 1:
         data = data[np.newaxis, :]
 
-    # Mean-center per channel
-    data = data - np.mean(data, axis=1, keepdims=True)
-
     n_channels, n_samples = data.shape
 
-    # Prepare shared frequency grid and matching scales (PyWavelets convention)
-    freqs = logspace_frequencies(fmin, fmax, voices_per_oct)          # shape (n_scales,)
-    scales = cwt_scales_for_freqs(freqs, fs, wavelet=wavelet)         # shape (n_scales,)
-    coi_mask = cone_of_influence_mask(n_samples, scales)              # shape (n_scales, n_times)
+    # Mean-center per channel (safe, stabilizes low-freq estimates)
+    data = data - np.mean(data, axis=1, keepdims=True)
+
+    # Prepare frequency grid, scales, and COI mask
+    freqs = logspace_frequencies(fmin, fmax, voices_per_oct)
+    scales = scales_from_frequencies(freqs, fs, w0)
+    coi_mask = cone_of_influence_mask(n_samples, scales)
 
     features = []
     for ch in range(n_channels):
         x = data[ch, :]
-        power_db = cwt_power_db_1d(x, fs, scales, wavelet=wavelet)    # (n_scales, n_times)
+        power_db = cwt_power_db_1d(x, fs, freqs, w0)
 
         # For each band, compute COI-aware band power (dB)
         for band_name, (lo, hi) in freq_bands.items():
@@ -113,16 +120,21 @@ for folder_name in os.listdir(base_dir):
 
     print(f"Processing folder: {folder_name} (using {data_file})...")
 
+    # Extract CWT-based features
     feats = cwt_features(
         data_file,
         fs=fs,
         fmin=fmin, fmax=fmax,
         voices_per_oct=voices_per_oct,
-        freq_bands=freq_bands,
-        wavelet=WAVELET
+        w0=w0,
+        freq_bands=freq_bands
     )
 
-    out_dir = os.path.join(output_dir, 'rest' if 'rest' in folder_name.lower() else 'task')
+    if 'rest' in folder_name.lower():
+        out_dir = os.path.join(output_dir, 'rest')
+    else:
+        out_dir = os.path.join(output_dir, 'task')
+
     os.makedirs(out_dir, exist_ok=True)
 
     csv_filename = f"{folder_name}.csv"
