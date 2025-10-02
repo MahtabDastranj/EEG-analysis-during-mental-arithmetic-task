@@ -7,7 +7,7 @@ output_dir = r'E:\AUT\thesis\files\features\CWT'
 
 fs = 500.0
 fmin, fmax = 0.5, 45.0
-voices_per_oct = 12            # 8–16 typical; 12 is a good default for EEG
+voices_per_oct = 12            # 8–16 typical
 w0 = 6.0                   # Morlet central angular frequency (cycles ~6)
 EPS = 1e-12                    # numerical floor for log
 
