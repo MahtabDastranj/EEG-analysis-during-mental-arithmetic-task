@@ -5,7 +5,7 @@ from scipy.interpolate import CubicSpline
 import pandas as pd
 
 base_dir = r'E:\AUT\thesis\files\Processed data\exported'
-output_dir = r'E:\AUT\thesis\files\features\HHT'
+output_dir = r'E:\AUT\thesis\files\features\EMD'
 
 # EMD parameters (thresholds for stopping criteria)
 max_imfs = 10
