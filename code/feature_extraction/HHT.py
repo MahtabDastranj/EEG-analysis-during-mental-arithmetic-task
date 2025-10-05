@@ -24,11 +24,7 @@ ceemdan_kwargs = dict(trials=30, noise_strength=0.30, max_imf=6)  # bump to (50,
 AMP_FLOOR_QUANT = 0.05
 FREQ_MIN, FREQ_MAX = 0.0, 60.0
 
-# Make output subfolders
-os.makedirs(os.path.join(output_dir, 'rest'), exist_ok=True)
-os.makedirs(os.path.join(output_dir, 'task'), exist_ok=True)
 
-# ---------- helpers ----------
 def anti_alias_and_resample(x, fs_in, fs_out):
     """FIR low-pass + zero-phase filter, then rational resample."""
     if fs_in == fs_out:

@@ -141,4 +141,3 @@ for folder_name in os.listdir(base_dir):
     csv_path = os.path.join(out_dir, csv_filename)
     np.savetxt(csv_path, feats, delimiter=',', fmt='%.6f')
     print(f"Saved features to {csv_path}")
-    
