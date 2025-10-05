@@ -7,15 +7,15 @@ output_dir = r'E:\AUT\thesis\files\features\CWT'
 
 fs = 500.0
 fmin, fmax = 0.5, 45.0
-voices_per_oct = 12            # 8–16 typical; 12 is a good default for EEG
-w0 = 6.0                   # Morlet central angular frequency (cycles ~6)
-EPS = 1e-12                    # numerical floor for log
+voices_per_oct = 12  # 8–16 typical; 12 is a good default for EEG
+w0 = 6.0  # Morlet central angular frequency (cycles ~6)
+EPS = 1e-12  # numerical floor for log
 
 freq_bands = {
     'delta': (0.5, 4),
     'theta': (4, 8),
     'alpha': (8, 13),
-    'beta':  (13, 30),
+    'beta': (13, 30),
     'gamma': (30, 45)
 }
 
@@ -45,8 +45,6 @@ def cwt_power_db_1d(x, fs, freqs_hz, w0=6.0):
     dt = 1.0 / fs
 
     # Convert desired frequencies -> scales
-    # In PyWavelets: scale = center_freq / (freq * dt)
-    # center_freq for cmor1.5-1.0 is ~1.0 (PyWavelets convention)
     wavelet = 'cmor1.5-1.0'
     center_freq = pywt.central_frequency(wavelet)
     scales = center_freq / (freqs_hz * dt)
@@ -101,11 +99,31 @@ def cwt_features(file_path, fs, fmin, fmax, voices_per_oct, w0, freq_bands):
         power_db = cwt_power_db_1d(x, fs, freqs, w0)
 
         # For each band, compute COI-aware band power (dB)
+        band_features = []
         for band_name, (lo, hi) in freq_bands.items():
             bp = bandpower_db_from_cwt(power_db, freqs, coi_mask, lo, hi)
-            features.append(bp)
+            band_features.append(bp)
 
-    return np.array(features, dtype=float)
+        # Store the band power features for this channel (this becomes a single row)
+        features.append(band_features)
+
+    # Convert features to a numpy array (19 x 5 shape)
+    features = np.array(features, dtype=float)
+
+    return features
+
+
+def save_features(features, folder_name, output_dir):
+    # Save the features in the format where each channel corresponds to a row with frequency bands in columns
+    out_dir = os.path.join(output_dir, 'rest' if 'rest' in folder_name.lower() else 'task')
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_filename = f"{folder_name}.csv"
+    csv_path = os.path.join(out_dir, csv_filename)
+
+    # Save the 19x5 matrix where each row corresponds to a channel and each column corresponds to a frequency band
+    np.savetxt(csv_path, features, delimiter=',', fmt='%.6f')
+    print(f"Saved features to {csv_path}")
 
 
 for folder_name in os.listdir(base_dir):
@@ -121,23 +139,6 @@ for folder_name in os.listdir(base_dir):
     print(f"Processing folder: {folder_name} (using {data_file})...")
 
     # Extract CWT-based features
-    feats = cwt_features(
-        data_file,
-        fs=fs,
-        fmin=fmin, fmax=fmax,
-        voices_per_oct=voices_per_oct,
-        w0=w0,
-        freq_bands=freq_bands
-    )
+    feats = cwt_features(data_file, fs=fs, fmin=fmin, fmax=fmax, voices_per_oct=voices_per_oct, w0=w0, freq_bands=freq_bands)
 
-    if 'rest' in folder_name.lower():
-        out_dir = os.path.join(output_dir, 'rest')
-    else:
-        out_dir = os.path.join(output_dir, 'task')
-
-    os.makedirs(out_dir, exist_ok=True)
-
-    csv_filename = f"{folder_name}.csv"
-    csv_path = os.path.join(out_dir, csv_filename)
-    np.savetxt(csv_path, feats, delimiter=',', fmt='%.6f')
-    print(f"Saved features to {csv_path}")
+    save_features(feats, folder_name, output_dir)
