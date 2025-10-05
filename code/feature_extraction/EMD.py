@@ -1,8 +1,7 @@
 import os
 import numpy as np
-from scipy import signal
-from scipy.interpolate import CubicSpline
 import pandas as pd
+from scipy.interpolate import CubicSpline
 
 base_dir = r'E:\AUT\thesis\files\Processed data\exported'
 output_dir = r'E:\AUT\thesis\files\features\EMD'
@@ -71,7 +70,6 @@ def emd_decomposition(signal, max_imfs=max_imfs, stopping_threshold=stopping_thr
         if np.mean(np.abs(imf)) < stopping_threshold:  # Amplitude threshold check
             break
 
-        # Save the IMF
         imfs.append(imf)
 
         # Update residual for next IMF extraction
@@ -80,7 +78,7 @@ def emd_decomposition(signal, max_imfs=max_imfs, stopping_threshold=stopping_thr
     return imfs
 
 
-# Function to process all EEG files (based on STFT file access method)
+# Function to process all EEG files and consolidate into 1 file per condition
 def process_eeg_files(base_dir, output_dir, max_imfs=max_imfs, stopping_threshold=stopping_threshold):
     # Loop over all subfolders in the base directory
     for folder_name in os.listdir(base_dir):
@@ -99,6 +97,14 @@ def process_eeg_files(base_dir, output_dir, max_imfs=max_imfs, stopping_threshol
                     imfs = emd_decomposition(channel_data, max_imfs, stopping_threshold)
                     imfs_per_file.append(imfs)
 
+                # Prepare to save IMF data for all channels
+                imfs_flattened = []
+
+                # Flatten the IMFs of all channels
+                for channel_idx, imfs in enumerate(imfs_per_file):
+                    for imf_idx, imf in enumerate(imfs):
+                        imfs_flattened.append(imf)
+
                 # Determine output directory based on folder name (task vs. rest)
                 if 'rest' in folder_name.lower():
                     out_dir = os.path.join(output_dir, 'rest')
@@ -108,14 +114,17 @@ def process_eeg_files(base_dir, output_dir, max_imfs=max_imfs, stopping_threshol
                 # Ensure the output directory exists
                 os.makedirs(out_dir, exist_ok=True)
 
-                # Save IMFs for each channel
-                for idx, imfs in enumerate(imfs_per_file):
-                    for i, imf in enumerate(imfs):
-                        # Convert IMF to DataFrame and save as CSV
-                        df = pd.DataFrame(imf)
-                        csv_filename = f"{folder_name}_channel_{idx}_imf_{i}.csv"
-                        csv_path = os.path.join(out_dir, csv_filename)
-                        df.to_csv(csv_path, index=False, header=False)
-                        print(f"Saved IMF {i} for channel {idx} in {csv_path}")
+                # Consolidate all channel IMFs into one DataFrame
+                flattened_data = np.array(imfs_flattened).T  # Transpose to (num_imfs, num_channels)
+
+                # Save as a single CSV file per condition
+                csv_filename = f"{folder_name}_imfs.csv"
+                csv_path = os.path.join(out_dir, csv_filename)
+                df = pd.DataFrame(flattened_data)
+                df.to_csv(csv_path, index=False, header=False)
+                print(f"Saved IMF data for folder {folder_name} in {csv_path}")
             else:
                 print(f"Warning: 'data.txt' not found in {folder_name}")
+
+
+process_eeg_files(base_dir, output_dir, max_imfs, stopping_threshold)
