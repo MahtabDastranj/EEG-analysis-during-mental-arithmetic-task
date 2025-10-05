@@ -51,9 +51,9 @@ def stft_features(file_path, fs, window_size, overlap, freq_bands):
                 band_power = 0.0  # If no frequencies in band
             ch_features.append(band_power)
 
-        features.extend(ch_features)
+        features.append(ch_features)
 
-    return np.array(features)  # Shape: (19 * num_bands,)
+    return np.array(features)  # Shape: (19, num_bands)
 
 
 # Iterate over all subfolders in the base directory
@@ -76,6 +76,8 @@ for folder_name in os.listdir(base_dir):
             # Save features to CSV with folder name as filename
             csv_filename = f"{folder_name}.csv"
             csv_path = os.path.join(out_dir, csv_filename)
+
+            # Save the features with 19 rows (channels) and 5 columns (frequency bands)
             np.savetxt(csv_path, feats, delimiter=',', fmt='%.6f')
             print(f"Saved features to {csv_path}")
         else:
