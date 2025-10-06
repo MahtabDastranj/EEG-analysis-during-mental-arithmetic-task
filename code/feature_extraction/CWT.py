@@ -121,6 +121,11 @@ def save_features(features, folder_name, output_dir):
     csv_filename = f"{folder_name}.csv"
     csv_path = os.path.join(out_dir, csv_filename)
 
+    # Check if the file already exists in the destination folder
+    if os.path.exists(csv_path):
+        print(f"File {csv_filename} already exists. Skipping feature extraction for this file.")
+        return  # Skip saving if the file already exists
+
     # Save the 19x5 matrix where each row corresponds to a channel and each column corresponds to a frequency band
     np.savetxt(csv_path, features, delimiter=',', fmt='%.6f')
     print(f"Saved features to {csv_path}")
@@ -136,9 +141,26 @@ for folder_name in os.listdir(base_dir):
         print(f"Warning: 'data.txt' not found in {folder_name}")
         continue
 
+    # Check if the features already exist for this file in the output folder
+    out_dir = os.path.join(output_dir, 'rest' if 'rest' in folder_name.lower() else 'task')
+    csv_filename = f"{folder_name}.csv"
+    csv_path = os.path.join(out_dir, csv_filename)
+
+    if os.path.exists(csv_path):
+        print(f"Features for {folder_name} already extracted. Skipping.")
+        continue  # Skip feature extraction if the file already exists
+
     print(f"Processing folder: {folder_name} (using {data_file})...")
 
     # Extract CWT-based features
-    feats = cwt_features(data_file, fs=fs, fmin=fmin, fmax=fmax, voices_per_oct=voices_per_oct, w0=w0, freq_bands=freq_bands)
+    feats = cwt_features(
+        data_file,
+        fs=fs,
+        fmin=fmin, fmax=fmax,
+        voices_per_oct=voices_per_oct,
+        w0=w0,
+        freq_bands=freq_bands
+    )
 
+    # Save the reshaped features where each channel corresponds to a row with 5 columns (frequency bands)
     save_features(feats, folder_name, output_dir)
