@@ -70,7 +70,6 @@ def hht_band_features(file_path, fs, freq_bands, fmin, fmax, max_imfs, normalize
     return feats  # shape: (channels, num_bands)
 
 
-# Iterate over all subfolders in the base directory
 for folder_name in os.listdir(base_dir):
     folder_path = os.path.join(base_dir, folder_name)
     if os.path.isdir(folder_path):
@@ -83,7 +82,6 @@ for folder_name in os.listdir(base_dir):
                 data_file, fs, freq_bands, fmin, fmax, max_imfs, normalize
             )
 
-            # Determine output directory based on folder name (rest/task)
             if 'rest' in folder_name.lower():
                 out_dir = os.path.join(output_dir, 'rest')
             else:
