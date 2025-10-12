@@ -1,130 +1,100 @@
 import os
 import numpy as np
-import pandas as pd
-from scipy.interpolate import CubicSpline
+from scipy.signal import hilbert
+from PyEMD import EMD
 
 base_dir = r'E:\AUT\thesis\files\Processed data\exported'
 output_dir = r'E:\AUT\thesis\files\features\EMD'
 
-# EMD parameters (thresholds for stopping criteria)
+fs = 500.0
+fmin, fmax = 0.5, 45.0
 max_imfs = 10
-stopping_threshold = 0.1
+normalize = True  # True: relative band energy within 0.5–45 Hz; False: absolute energy
 
 freq_bands = {
     'delta': (0.5, 4),
     'theta': (4, 8),
     'alpha': (8, 13),
-    'beta': (13, 30),
+    'beta':  (13, 30),
     'gamma': (30, 45)
 }
 
 
-# Function to read EEG data from txt files (same as in STFT)
-def read_eeg_data(file_path):
-    data = np.loadtxt(file_path).T  # Transpose to (channels, samples)
-    if data.ndim == 1:
-        data = data[np.newaxis, :]
-    return data
-
-
-# Function to perform cubic spline interpolation
-def cubic_spline_interpolate(x, y):
-    cs = CubicSpline(x, y)
-    return cs
-
-
-# Function to find local extrema (minima and maxima)
-def find_extrema(signal):
-    minima = []
-    maxima = []
-
-    # Loop over signal and find local extrema
-    for i in range(1, len(signal) - 1):
-        if signal[i - 1] < signal[i] and signal[i] > signal[i + 1]:
-            maxima.append(i)
-        elif signal[i - 1] > signal[i] and signal[i] < signal[i + 1]:
-            minima.append(i)
-
-    return minima, maxima
-
-
-# EMD Decomposition process
-def emd_decomposition(signal, max_imfs=max_imfs, stopping_threshold=stopping_threshold):
-    imfs = []
-    residual = signal
-    for i in range(max_imfs):
-        # Step 1: Extract local extrema
-        minima, maxima = find_extrema(residual)
-
-        # Step 2: Interpolate to form upper and lower envelopes
-        lower_envelope = cubic_spline_interpolate(minima, residual[minima])(np.arange(len(residual)))
-        upper_envelope = cubic_spline_interpolate(maxima, residual[maxima])(np.arange(len(residual)))
-
-        # Step 3: Compute the mean envelope
-        mean_envelope = (lower_envelope + upper_envelope) / 2
-
-        # Step 4: Subtract the mean from the signal
-        imf = residual - mean_envelope
-
-        # Step 5: Check stopping criteria
-        if np.mean(np.abs(imf)) < stopping_threshold:  # Amplitude threshold check
-            break
-
-        imfs.append(imf)
-
-        # Update residual for next IMF extraction
-        residual = imf
-
+def emd_decompose(x, max_imfs=10):
+    """EMD using PyEMD; returns IMFs as (n_imfs, N)."""
+    emd = EMD()
+    imfs = emd.emd(x)
+    if imfs.shape[0] > max_imfs:
+        imfs = imfs[:max_imfs]
     return imfs
 
 
-# Function to process all EEG files and consolidate into 1 file per condition
-def process_eeg_files(base_dir, output_dir, max_imfs=max_imfs, stopping_threshold=stopping_threshold):
-    # Loop over all subfolders in the base directory
-    for folder_name in os.listdir(base_dir):
-        folder_path = os.path.join(base_dir, folder_name)
-        if os.path.isdir(folder_path):
-            data_file = os.path.join(folder_path, 'data.txt')  # Assume 'data.txt' in each folder
-            if os.path.exists(data_file):
-                print(f"Processing folder: {folder_name} (using {data_file})...")
+def hht_band_features(file_path, fs, freq_bands, fmin, fmax, max_imfs, normalize):
+    """
+    compute HHT band energies per channel -> (channels, num_bands).
+    """
+    data = np.loadtxt(file_path).T  # make (channels, samples); your data: (19, 90001)
+    if data.ndim == 1:
+        data = data[np.newaxis, :]
+    num_channels, _ = data.shape
 
-                # Read the EEG data from the text file
-                eeg_data = read_eeg_data(data_file)
+    band_names = list(freq_bands.keys())
+    feats = np.zeros((num_channels, len(band_names)), dtype=float)
 
-                # Process each channel (19 channels)
-                imfs_per_file = []
-                for channel_data in eeg_data:
-                    imfs = emd_decomposition(channel_data, max_imfs, stopping_threshold)
-                    imfs_per_file.append(imfs)
+    for ch in range(num_channels):
+        x = data[ch].astype(float)
+        x = x - np.mean(x)  # detrend improves EMD numerics
 
-                # Prepare to save IMF data for all channels
-                imfs_flattened = []
+        imfs = emd_decompose(x, max_imfs=max_imfs)
+        if imfs.size == 0:
+            continue  # leave zeros if no IMFs
 
-                # Flatten the IMFs of all channels
-                for channel_idx, imfs in enumerate(imfs_per_file):
-                    for imf_idx, imf in enumerate(imfs):
-                        imfs_flattened.append(imf)
+        # Hilbert per IMF (axis=1 because imfs is (M, N))
+        analytic = hilbert(imfs, axis=1)
+        amp = np.abs(analytic)
+        phase = np.unwrap(np.angle(analytic), axis=1)
+        inst_freq = (fs / (2.0 * np.pi)) * np.diff(phase, axis=1)  # (M, N-1)
+        energy = amp[:, :-1] ** 2  # align with N-1
 
-                # Determine output directory based on folder name (task vs. rest)
-                if 'rest' in folder_name.lower():
-                    out_dir = os.path.join(output_dir, 'rest')
-                else:
-                    out_dir = os.path.join(output_dir, 'task')
+        # Global valid frequency mask (respect 0.5–45 Hz passband)
+        valid = (inst_freq >= fmin) & (inst_freq <= fmax)
+        total_energy = np.sum(energy[valid]) + 1e-12
 
-                # Ensure the output directory exists
-                os.makedirs(out_dir, exist_ok=True)
+        row = []
+        for (lo, hi) in freq_bands.values():
+            mask = (inst_freq >= lo) & (inst_freq < hi) & valid
+            band_energy = np.sum(energy[mask])
+            row.append(band_energy / total_energy if normalize else band_energy)
+        feats[ch, :] = row
 
-                # Consolidate all channel IMFs into one DataFrame
-                flattened_data = np.array(imfs_flattened).T  # Transpose to (num_imfs, num_channels)
+    return feats  # shape: (channels, num_bands)
 
-                # Save as a single CSV file per condition
-                csv_filename = f"{folder_name}_imfs.csv"
-                csv_path = os.path.join(out_dir, csv_filename)
-                df = pd.DataFrame(flattened_data)
-                df.to_csv(csv_path, index=False, header=False)
-                print(f"Saved IMF data for folder {folder_name} in {csv_path}")
+
+# Iterate over all subfolders in the base directory
+for folder_name in os.listdir(base_dir):
+    folder_path = os.path.join(base_dir, folder_name)
+    if os.path.isdir(folder_path):
+        data_file = os.path.join(folder_path, 'data.txt')
+        if os.path.exists(data_file):
+            print(f"Processing folder: {folder_name} (using {data_file})...")
+
+            # Extract HHT features
+            feats = hht_band_features(
+                data_file, fs, freq_bands, fmin, fmax, max_imfs, normalize
+            )
+
+            # Determine output directory based on folder name (rest/task)
+            if 'rest' in folder_name.lower():
+                out_dir = os.path.join(output_dir, 'rest')
             else:
-                print(f"Warning: 'data.txt' not found in {folder_name}")
+                out_dir = os.path.join(output_dir, 'task')
+            os.makedirs(out_dir, exist_ok=True)
 
+            # Save features to CSV with folder name as filename
+            csv_filename = f"{folder_name}.csv"
+            csv_path = os.path.join(out_dir, csv_filename)
 
-process_eeg_files(base_dir, output_dir, max_imfs, stopping_threshold)
+            np.savetxt(csv_path, feats, delimiter=',', fmt='%.6f')
+            print(f"Saved features to {csv_path}")
+        else:
+            print(f"Warning: 'data.txt' not found in {folder_name}")
