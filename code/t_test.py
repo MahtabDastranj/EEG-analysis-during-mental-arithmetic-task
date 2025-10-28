@@ -5,32 +5,28 @@ import pandas as pd
 import numpy as np
 from scipy.stats import ttest_rel, t
 
-out_dir = Path(r'E:\AUT\thesis\files\feature_reduction')  # was str
-labels_csv = Path(r"E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv")  # keep as Path
-root_feature_dir = Path(r"E:\AUT\thesis\files\features")  # was str
+# ----------------------
+# Config (Paths)
+# ----------------------
+out_dir = Path(r'E:\AUT\thesis\files\feature_reduction')
+labels_csv = Path(r"E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv")
+root_feature_dir = Path(r"E:\AUT\thesis\files\features")
 
 methods = ("STFT", "CWT", "EMD")
 n_channels = 19
-band_names = ["delta", "theta", "alpha", "beta", "gamma"]
-alph_FDR = 0.05  # FDR threshold
+band_names = ["delta", "theta", "alpha", "beta", "gamma"]  # ensure this matches your file column order
 
 
 def extract_id(path):
     stem = Path(path).stem
-    # assumes first two chars are digits 00..35
-    return int(stem[:2])
+    return int(stem[:2])  # assumes filenames start with 2-digit ID 00..35
 
 
 def id_label_extraction(labels_csv):
     df = pd.read_csv(labels_csv, header=0)
-
-    # First column like "Subject00" -> extract 2 digits then int
     col0 = df.iloc[:, 0].astype(str).str.strip()
     pid = col0.str.extract(r'(\d{2})', expand=False).astype(int)
-
-    # Fifth column should be 0/1 (counting quality)
-    qual = pd.to_numeric(df.iloc[:, 4], errors="coerce").astype(int)
-
+    qual = pd.to_numeric(df.iloc[:, 4], errors="coerce").astype(int)  # 0/1
     return {0: pid[qual == 0].tolist(), 1: pid[qual == 1].tolist()}
 
 
@@ -52,15 +48,13 @@ def bh_fdr(pvals):
     if p.size == 0:
         return p
     m = p.size
-    order = np.argsort(p)                      # indices that sort p ascending
+    order = np.argsort(p)
     ranks = np.empty_like(order)
-    ranks[order] = np.arange(1, m + 1)         # rank for each original index
-
-    q = p * m / ranks                          # BH raw q-values (original order)
-    # enforce monotonicity on sorted sequence, then map back
+    ranks[order] = np.arange(1, m + 1)
+    q = p * m / ranks
     q_sorted = np.minimum.accumulate(q[order][::-1])[::-1]
     out = np.empty_like(p, dtype=float)
-    out[order] = np.clip(q_sorted, 0.0, 1.0)   # clip to [0,1]
+    out[order] = np.clip(q_sorted, 0.0, 1.0)
     return out
 
 
@@ -69,10 +63,10 @@ def channel_labels(n):
 
 
 def read_features(path):
-    """ participant_id + (ch01_delta ... ch19_gamma) = 95 features. """
+    """Return one-row DataFrame: participant_id + chXX_band (95 cols)."""
     mat = pd.read_csv(path, header=None)
     if mat.shape != (n_channels, len(band_names)):
-        raise ValueError(f"{Path(path).name}: expected shape {(n_channels, len(band_names))}, got {mat.shape}")
+        raise ValueError(f"{Path(path).name}: expected {(n_channels, len(band_names))}, got {mat.shape}")
     mat.columns = band_names
     mat.index = channel_labels(n_channels)
 
@@ -92,7 +86,6 @@ def stack_features(paths):
         return pd.DataFrame(columns=["participant_id"])
     rows = [read_features(p) for p in sorted(paths)]
     all_df = pd.concat(rows, axis=0, ignore_index=True)
-    # Aggregate duplicates by mean if any
     num_cols = ["participant_id"] + [c for c in all_df.columns if c != "participant_id"]
     agg = all_df[num_cols].groupby("participant_id", as_index=False).mean(numeric_only=True)
     return agg
@@ -120,8 +113,8 @@ def descriptive_by_feature(merged, base_feats):
     rows = []
     n_pairs = merged.shape[0]
     for f in base_feats:
-        a = merged[f + "_task"].to_numpy(dtype=float)  # Task
-        b = merged[f + "_rest"].to_numpy(dtype=float)  # Rest
+        a = merged[f + "_task"].to_numpy(dtype=float)
+        b = merged[f + "_rest"].to_numpy(dtype=float)
         diff = a - b
 
         mean_rest = float(np.nanmean(b)); sd_rest = float(np.nanstd(b, ddof=1))
@@ -134,7 +127,7 @@ def descriptive_by_feature(merged, base_feats):
 
         if n_pairs > 1 and not np.isnan(sd_diff):
             se = sd_diff / np.sqrt(n_pairs)
-            tcrit = t.ppf(0.975, df=n_pairs - 1)  # 95% two-tailed
+            tcrit = t.ppf(0.975, df=n_pairs - 1)
             ci_low = float(mean_diff - tcrit * se)
             ci_high = float(mean_diff + tcrit * se)
         else:
@@ -158,7 +151,7 @@ def run_group_full_stats(rest_df, task_df, group_ids):
         return pd.DataFrame()
 
     feat_cols_rest = [c for c in merged.columns if c.endswith("_rest")]
-    base_feats = [c[:-5] for c in feat_cols_rest if (c[:-5] + "_task") in merged.columns]  # remove "_rest"
+    base_feats = [c[:-5] for c in feat_cols_rest if (c[:-5] + "_task") in merged.columns]
 
     stats_df = descriptive_by_feature(merged, base_feats)
     stats_df["p_fdr"] = bh_fdr(stats_df["p"].to_numpy())
@@ -185,8 +178,6 @@ def process_method(method_name, rest_files, task_files, labels_dict):
     task_df = task_df[["participant_id"] + common_feats].copy()
 
     method_frames = []
-    sig_frames = []
-
     for label in (0, 1):
         group_ids = labels_dict.get(label, [])
         group_df = run_group_full_stats(rest_df, task_df, group_ids)
@@ -194,7 +185,6 @@ def process_method(method_name, rest_files, task_files, labels_dict):
             continue
         group_df.insert(1, "label_group", label)
         method_frames.append(group_df)
-        sig_frames.append(group_df[group_df["p_fdr"] <= alph_FDR].copy())
 
     if not method_frames:
         return pd.DataFrame(columns=[
@@ -205,18 +195,11 @@ def process_method(method_name, rest_files, task_files, labels_dict):
 
     full = pd.concat(method_frames, axis=0, ignore_index=True)
     full.insert(0, "method", method_name)
-    out_full = out_dir / f"ttest_results_{method_name}.csv"
-    full.to_csv(out_full, index=False)
-
-    sig = pd.concat(sig_frames, axis=0, ignore_index=True) if any(len(df) for df in sig_frames) else pd.DataFrame(columns=full.columns)
-    out_sig = out_dir / f"significant_{method_name}.csv"
-    sig.to_csv(out_sig, index=False)
-
+    full.to_csv(out_dir / f"ttest_results_{method_name}.csv", index=False)
     return full
 
 
 def main():
-    # ensure output dir exists
     out_dir.mkdir(parents=True, exist_ok=True)
 
     labels_dict = id_label_extraction(labels_csv)
@@ -234,8 +217,7 @@ def main():
     if all_frames:
         all_df = pd.concat(all_frames, axis=0, ignore_index=True)
         all_df.to_csv(out_dir / "ttest_results_ALL.csv", index=False)
-        sig_all = all_df[all_df["p_fdr"] <= alph_FDR].copy()
-        sig_all.to_csv(out_dir / "significant_ALL.csv", index=False)
+
 
 if __name__ == "__main__":
     main()
