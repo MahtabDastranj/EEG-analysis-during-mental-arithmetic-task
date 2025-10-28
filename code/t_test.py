@@ -4,89 +4,41 @@ import json
 import pandas as pd
 import numpy as np
 from scipy.stats import ttest_rel, t
-from datetime import datetime
 
-# ======================
-# ====== CONFIG  =======
-# ======================
-SCRIPT_DIR = Path(".").resolve()
-OUT_DIR = SCRIPT_DIR
-LOG_DIR = OUT_DIR / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+out_dir = Path(r'E:\AUT\thesis\files\feature_reduction')  # was str
+labels_csv = Path(r"E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv")  # keep as Path
+root_feature_dir = Path(r"E:\AUT\thesis\files\features")  # was str
 
-# Labels CSV: HAS header. 1st column = participant_id, 5th column = counting_quality in {0,1}
-LABELS_CSV = Path(r"/path/to/your/labels.csv")  # <-- EDIT THIS
+methods = ("STFT", "CWT", "EMD")
+n_channels = 19
+band_names = ["delta", "theta", "alpha", "beta", "gamma"]
+alph_FDR = 0.05  # FDR threshold
 
-# Root folder with STFT/CWT/EMD; each method folder contains per-participant CSVs.
-ROOT_DIR = Path(r"/path/to/your/features_root")  # <-- EDIT THIS
-METHODS = ("STFT", "CWT", "EMD")
 
-# Per-file matrix assumptions (no header in feature files)
-N_CHANNELS = 19
-BAND_NAMES = ["delta", "theta", "alpha", "beta", "gamma"]  # must match your 5 column order
-ALPHA_FDR = 0.05  # FDR threshold for "significant" outputs
-
-# ======================
-# ===== Logging ========
-# ======================
-RUN_REPORT = LOG_DIR / "RUN_REPORT.txt"
-
-def log_line(path, text, mode="a"):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, mode, encoding="utf-8") as f:
-        f.write(text.rstrip("\n") + "\n")
-
-def log_header():
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_line(RUN_REPORT, "=" * 80, mode="w")
-    log_line(RUN_REPORT, f"Run started: {ts}")
-    log_line(RUN_REPORT, f"LABELS_CSV: {LABELS_CSV}")
-    log_line(RUN_REPORT, f"ROOT_DIR:   {ROOT_DIR}")
-    log_line(RUN_REPORT, f"OUT_DIR:    {OUT_DIR}")
-    log_line(RUN_REPORT, f"LOG_DIR:    {LOG_DIR}")
-    log_line(RUN_REPORT, f"Assumptions: 19x5 feature files (no header), labels CSV has header")
-    log_line(RUN_REPORT, f"Band order: {BAND_NAMES}")
-    log_line(RUN_REPORT, f"ID rule: first two filename chars 00..35 -> 0..35")
-    log_line(RUN_REPORT, "=" * 80)
-
-# ======================
-# === Simple ID parse ==
-# ======================
-def extract_id_from_filename(path):
-    """
-    Assumes filename starts with a two-digit participant index: 00..35
-    Returns integer 0..35
-    """
+def extract_id(path):
     stem = Path(path).stem
-    if len(stem) < 2 or not stem[:2].isdigit():
-        raise ValueError(f"Filename must start with two digits (00..35): {Path(path).name}")
-    pid = int(stem[:2])
-    if not (0 <= pid <= 35):
-        raise ValueError(f"Two-digit ID out of range 00..35 in: {Path(path).name}")
-    return pid
+    # assumes first two chars are digits 00..35
+    return int(stem[:2])
 
-# ======================
-# === Label handling ===
-# ======================
-def read_labels_build_dict(labels_csv):
-    """
-    Labels CSV HAS header. Use column positions:
-      col 1 (index 0): participant_id
-      col 5 (index 4): counting_quality in {0,1}
-    Returns dict {0: [ids], 1: [ids]}.
-    """
+
+def id_label_extraction(labels_csv):
     df = pd.read_csv(labels_csv, header=0)
-    pid = df.iloc[:, 0].astype(int)
-    qual = df.iloc[:, 4].astype(int)
+
+    # First column like "Subject00" -> extract 2 digits then int
+    col0 = df.iloc[:, 0].astype(str).str.strip()
+    pid = col0.str.extract(r'(\d{2})', expand=False).astype(int)
+
+    # Fifth column should be 0/1 (counting quality)
+    qual = pd.to_numeric(df.iloc[:, 4], errors="coerce").astype(int)
+
     return {0: pid[qual == 0].tolist(), 1: pid[qual == 1].tolist()}
 
-# ======================
-# === Stats helpers  ===
-# ======================
+
 def cohen_d_paired(a, b):
     diff = np.asarray(a - b).reshape(-1)
     sd = diff.std(ddof=1)
     return np.nan if sd == 0 else diff.mean() / sd
+
 
 def hedges_g_paired(d, n):
     if n <= 1 or np.isnan(d):
@@ -94,70 +46,60 @@ def hedges_g_paired(d, n):
     J = 1.0 - (3.0 / (4.0 * (n - 1) - 1.0))
     return d * J
 
-def bh_fdr(pvals):
-    m = max(1, len(pvals))
-    order = np.argsort(pvals)
-    ranks = np.empty_like(order)
-    ranks[order] = np.arange(1, m + 1)
-    q = pvals * m / ranks
-    q_sorted = np.minimum.accumulate(q[order][::-1])[::-1]
-    qvals = np.empty_like(pvals, dtype=float)
-    qvals[order] = q_sorted
-    return qvals
 
-# ======================
-# === IO & shaping   ===
-# ======================
+def bh_fdr(pvals):
+    p = np.asarray(pvals, dtype=float)
+    if p.size == 0:
+        return p
+    m = p.size
+    order = np.argsort(p)                      # indices that sort p ascending
+    ranks = np.empty_like(order)
+    ranks[order] = np.arange(1, m + 1)         # rank for each original index
+
+    q = p * m / ranks                          # BH raw q-values (original order)
+    # enforce monotonicity on sorted sequence, then map back
+    q_sorted = np.minimum.accumulate(q[order][::-1])[::-1]
+    out = np.empty_like(p, dtype=float)
+    out[order] = np.clip(q_sorted, 0.0, 1.0)   # clip to [0,1]
+    return out
+
+
 def channel_labels(n):
     return [f"ch{idx:02d}" for idx in range(1, n + 1)]
 
-def read_19x5_feature_matrix(path):
-    """
-    Read a per-participant 19x5 CSV (NO HEADER) and return a single wide row:
-    participant_id + (ch01_delta ... ch19_gamma) = 95 features.
-    """
+
+def read_features(path):
+    """ participant_id + (ch01_delta ... ch19_gamma) = 95 features. """
     mat = pd.read_csv(path, header=None)
-
-    if mat.shape != (N_CHANNELS, len(BAND_NAMES)):
-        raise ValueError(f"{Path(path).name}: expected shape {(N_CHANNELS, len(BAND_NAMES))}, got {mat.shape}")
-
-    mat.columns = BAND_NAMES
-    mat.index = channel_labels(N_CHANNELS)
+    if mat.shape != (n_channels, len(band_names)):
+        raise ValueError(f"{Path(path).name}: expected shape {(n_channels, len(band_names))}, got {mat.shape}")
+    mat.columns = band_names
+    mat.index = channel_labels(n_channels)
 
     flat = {}
     for ch in mat.index:
-        for band in BAND_NAMES:
+        for band in band_names:
             flat[f"{ch}_{band}"] = float(mat.at[ch, band])
 
-    pid = extract_id_from_filename(path)
+    pid = extract_id(path)
     row = {"participant_id": pid}
     row.update(flat)
     return pd.DataFrame([row])
 
-def load_and_concat_participants(paths):
-    """
-    Stack per-participant 19x5 files into one table (one row per participant).
-    Aggregates duplicates (if any) by mean.
-    """
+
+def stack_features(paths):
     if not paths:
         return pd.DataFrame(columns=["participant_id"])
-    rows = [read_19x5_feature_matrix(p) for p in sorted(paths)]
+    rows = [read_features(p) for p in sorted(paths)]
     all_df = pd.concat(rows, axis=0, ignore_index=True)
-    # Aggregate duplicates by mean (just in case)
+    # Aggregate duplicates by mean if any
     num_cols = ["participant_id"] + [c for c in all_df.columns if c != "participant_id"]
     agg = all_df[num_cols].groupby("participant_id", as_index=False).mean(numeric_only=True)
     return agg
 
-# ======================
-# === STFT-like discovery (rest/task by name) ===
-# ======================
-def discover_files_stft_style(method_root):
-    """
-    Walk method_root; any .csv with 'rest' in its path/name -> REST, else -> TASK.
-    Returns dict {'rest': [...], 'task': [...]} of Path objects.
-    """
-    rest_files = []
-    task_files = []
+
+def find_files(method_root):
+    rest_files, task_files = [], []
     for dirpath, _, filenames in os.walk(method_root):
         for fn in filenames:
             if not fn.lower().endswith(".csv"):
@@ -169,12 +111,11 @@ def discover_files_stft_style(method_root):
                 task_files.append(fpath)
     return {"rest": rest_files, "task": task_files}
 
-def discover_feature_files(root, methods=METHODS):
-    return {m: discover_files_stft_style(root / m) for m in methods}
 
-# ======================
-# === Stat pipeline  ===
-# ======================
+def discover_feature_files(root, methods=methods):
+    return {m: find_files(root / m) for m in methods}
+
+
 def descriptive_by_feature(merged, base_feats):
     rows = []
     n_pairs = merged.shape[0]
@@ -208,6 +149,7 @@ def descriptive_by_feature(merged, base_feats):
         "mean_diff", "sd_diff", "t", "p", "d_paired", "g_paired", "ci95_low", "ci95_high"
     ])
 
+
 def run_group_full_stats(rest_df, task_df, group_ids):
     rest_sub = rest_df[rest_df["participant_id"].isin(group_ids)].copy()
     task_sub = task_df[task_df["participant_id"].isin(group_ids)].copy()
@@ -216,46 +158,29 @@ def run_group_full_stats(rest_df, task_df, group_ids):
         return pd.DataFrame()
 
     feat_cols_rest = [c for c in merged.columns if c.endswith("_rest")]
-    base_feats = [c[:-5] for c in feat_cols_rest if (c[:-5] + "_task") in merged.columns]  # strip "_rest"
+    base_feats = [c[:-5] for c in feat_cols_rest if (c[:-5] + "_task") in merged.columns]  # remove "_rest"
 
     stats_df = descriptive_by_feature(merged, base_feats)
     stats_df["p_fdr"] = bh_fdr(stats_df["p"].to_numpy())
     stats_df = stats_df.sort_values(by=["p_fdr", "t"], ascending=[True, False]).reset_index(drop=True)
     return stats_df
 
+
 def process_method(method_name, rest_files, task_files, labels_dict):
-    method_log = LOG_DIR / f"METHOD_{method_name}.txt"
-    with open(method_log, "w", encoding="utf-8") as f:
-        f.write(f"Processing method: {method_name}\n")
-        f.write("-" * 80 + "\n")
-
-    def mlog(s):
-        log_line(method_log, s)
-
-    if not rest_files:
-        mlog("No REST files found.")
-        return pd.DataFrame()
-    if not task_files:
-        mlog("No TASK files found.")
+    if not rest_files or not task_files:
         return pd.DataFrame()
 
-    mlog(f"REST files: {len(rest_files)} | TASK files: {len(task_files)}")
-
-    rest_df = load_and_concat_participants(rest_files)
-    task_df = load_and_concat_participants(task_files)
-
+    rest_df = stack_features(rest_files)
+    task_df = stack_features(task_files)
     if rest_df.empty or task_df.empty:
-        mlog("Empty REST or TASK data after loading. Skipping.")
         return pd.DataFrame()
 
     feats_rest = [c for c in rest_df.columns if c != "participant_id"]
     feats_task = [c for c in task_df.columns if c != "participant_id"]
     common_feats = sorted(set(feats_rest).intersection(feats_task))
     if not common_feats:
-        mlog("No common feature columns between REST and TASK.")
         return pd.DataFrame()
 
-    # Reduce to common features
     rest_df = rest_df[["participant_id"] + common_feats].copy()
     task_df = task_df[["participant_id"] + common_feats].copy()
 
@@ -264,22 +189,14 @@ def process_method(method_name, rest_files, task_files, labels_dict):
 
     for label in (0, 1):
         group_ids = labels_dict.get(label, [])
-        mlog(f"Label group {label}: candidate IDs = {len(group_ids)}")
-
         group_df = run_group_full_stats(rest_df, task_df, group_ids)
         if group_df.empty:
-            mlog(f"Label {label}: insufficient matched pairs or no data. Skipped.")
             continue
-
-        n_pairs = int(group_df["n"].iloc[0]) if not group_df.empty else 0
-        mlog(f"Label {label}: matched pairs used = {n_pairs}, features tested = {group_df.shape[0]}")
-
         group_df.insert(1, "label_group", label)
         method_frames.append(group_df)
-        sig_frames.append(group_df[group_df["p_fdr"] <= ALPHA_FDR].copy())
+        sig_frames.append(group_df[group_df["p_fdr"] <= alph_FDR].copy())
 
     if not method_frames:
-        mlog("No results generated for any label in this method.")
         return pd.DataFrame(columns=[
             "method", "feature", "label_group", "n",
             "mean_rest", "sd_rest", "mean_task", "sd_task",
@@ -288,62 +205,37 @@ def process_method(method_name, rest_files, task_files, labels_dict):
 
     full = pd.concat(method_frames, axis=0, ignore_index=True)
     full.insert(0, "method", method_name)
-    out_full = OUT_DIR / f"ttest_results_{method_name}.csv"
+    out_full = out_dir / f"ttest_results_{method_name}.csv"
     full.to_csv(out_full, index=False)
-    mlog(f"Full results saved to: {out_full}")
 
     sig = pd.concat(sig_frames, axis=0, ignore_index=True) if any(len(df) for df in sig_frames) else pd.DataFrame(columns=full.columns)
-    out_sig = OUT_DIR / f"significant_{method_name}.csv"
+    out_sig = out_dir / f"significant_{method_name}.csv"
     sig.to_csv(out_sig, index=False)
-    mlog(f"Significant (p_fdr <= {ALPHA_FDR}) saved to: {out_sig}")
 
     return full
 
-# ======================
-# ====== Main ==========
-# ======================
+
 def main():
-    log_header()
+    # ensure output dir exists
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    labels_dict = id_label_extraction(labels_csv)
+    (out_dir / "labels_dict.json").write_text(json.dumps(labels_dict, indent=2))
 
-    # Labels dictionary
-    labels_dict = read_labels_build_dict(LABELS_CSV)
-    labels_json_path = OUT_DIR / "labels_dict.json"
-    labels_json_path.write_text(json.dumps(labels_dict, indent=2))
-    log_line(RUN_REPORT, f"Label dictionary saved: {labels_json_path}")
-    log_line(RUN_REPORT, f"Label counts -> bad(0): {len(labels_dict.get(0, []))} | good(1): {len(labels_dict.get(1, []))}")
+    discovered = discover_feature_files(root_feature_dir, methods=methods)
 
-    # Discover files per method (no file-list logs, per your request)
-    discovered = discover_feature_files(ROOT_DIR, methods=METHODS)
-    log_line(RUN_REPORT, "Discovery complete for all methods.")
-
-    # Process methods
     all_frames = []
-    for method in METHODS:
+    for method in methods:
         paths = discovered.get(method, {})
         full_df = process_method(method, paths.get("rest", []), paths.get("task", []), labels_dict)
         if not full_df.empty:
             all_frames.append(full_df)
-            log_line(RUN_REPORT, f"[{method}] rows written: {full_df.shape[0]}")
 
-    # Combined output
     if all_frames:
         all_df = pd.concat(all_frames, axis=0, ignore_index=True)
-        out_all = OUT_DIR / "ttest_results_ALL.csv"
-        all_df.to_csv(out_all, index=False)
-        log_line(RUN_REPORT, f"Combined ALL results: {out_all}")
-
-        sig_all = all_df[all_df["p_fdr"] <= ALPHA_FDR].copy()
-        out_sig_all = OUT_DIR / "significant_ALL.csv"
-        sig_all.to_csv(out_sig_all, index=False)
-        log_line(RUN_REPORT, f"Combined significant (p_fdr <= {ALPHA_FDR}): {out_sig_all}")
-        log_line(RUN_REPORT, f"Total significant rows: {sig_all.shape[0]}")
-    else:
-        log_line(RUN_REPORT, "No results generated for any method.")
-
-    log_line(RUN_REPORT, "=" * 80)
-    log_line(RUN_REPORT, "Run finished.")
+        all_df.to_csv(out_dir / "ttest_results_ALL.csv", index=False)
+        sig_all = all_df[all_df["p_fdr"] <= alph_FDR].copy()
+        sig_all.to_csv(out_dir / "significant_ALL.csv", index=False)
 
 if __name__ == "__main__":
     main()
