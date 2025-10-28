@@ -5,9 +5,6 @@ import pandas as pd
 import numpy as np
 from scipy.stats import ttest_rel, t
 
-# ----------------------
-# Config (Paths)
-# ----------------------
 out_dir = Path(r'E:\AUT\thesis\files\feature_reduction')
 labels_csv = Path(r"E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv")
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
@@ -26,7 +23,7 @@ def id_label_extraction(labels_csv):
     df = pd.read_csv(labels_csv, header=0)
     col0 = df.iloc[:, 0].astype(str).str.strip()
     pid = col0.str.extract(r'(\d{2})', expand=False).astype(int)
-    qual = pd.to_numeric(df.iloc[:, 4], errors="coerce").astype(int)  # 0/1
+    qual = pd.to_numeric(df.iloc[:, 5], errors="coerce").astype(int)  # 0/1
     return {0: pid[qual == 0].tolist(), 1: pid[qual == 1].tolist()}
 
 
