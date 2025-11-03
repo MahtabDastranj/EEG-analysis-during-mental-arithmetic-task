@@ -16,7 +16,7 @@ band_names = ["delta", "theta", "alpha", "beta", "gamma"]  # ensure this matches
 
 def extract_id(path):
     stem = Path(path).stem
-    return int(stem[:2])  # assumes filenames start with 2-digit ID 00..35
+    return int(stem[:2])  # filenames start with 2-digit ID 00..35
 
 
 def id_label_extraction(labels_csv):
