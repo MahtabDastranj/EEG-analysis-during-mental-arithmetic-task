@@ -1,9 +1,12 @@
 from pathlib import Path
 import os
 import json
+import re
+
 import pandas as pd
 import numpy as np
-from scipy.stats import ttest_rel, t
+from scipy.stats import ttest_rel, t, shapiro, wilcoxon
+from statsmodels.stats.multitest import fdrcorrection
 
 out_dir = Path(r'E:\AUT\thesis\files\feature_reduction')
 labels_csv = Path(r"E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv")
@@ -16,19 +19,57 @@ band_names = ["delta", "theta", "alpha", "beta", "gamma"]  # ensure this matches
 
 def extract_id(path):
     stem = Path(path).stem
-    return int(stem[:2])  # filenames start with 2-digit ID 00..35
+    m = re.search(r'(\d{2})', stem)
+    if not m:
+        raise ValueError(f"Cannot extract 2-digit participant id from filename: {stem}")
+    return int(m.group(1))
 
 
 def id_label_extraction(labels_csv):
     df = pd.read_csv(labels_csv, header=0)
-    col0 = df.iloc[:, 0].astype(str).str.strip()
+    # try to be flexible but keep your original approach: first column for ids, 6th column for label if not otherwise found
+    possible_pid_cols = ['participant', 'id', 'subject', 'subj', 'PID']
+    possible_label_cols = ['quality', 'qual', 'good_bad', 'accurate_count_label', 'label', 'quality_flag']
+
+    pid_col = None
+    for c in df.columns:
+        if any(p.lower() in str(c).lower() for p in possible_pid_cols):
+            pid_col = c
+            break
+    if pid_col is None:
+        pid_col = df.columns[0]
+
+    label_col = None
+    for c in df.columns:
+        if any(p.lower() in str(c).lower() for p in possible_label_cols):
+            label_col = c
+            break
+    if label_col is None:
+        # fallback to original hard-coded index if present
+        if df.shape[1] > 5:
+            label_col = df.columns[5]
+        else:
+            raise ValueError("Cannot find label column in labels_csv; provide a CSV with an appropriate label column.")
+
+    col0 = df[pid_col].astype(str).str.strip()
     pid = col0.str.extract(r'(\d{2})', expand=False).astype(int)
-    qual = pd.to_numeric(df.iloc[:, 5], errors="coerce").astype(int)  # 0/1
+
+    qual = pd.to_numeric(df[label_col], errors="coerce")
+    if qual.isna().any():
+        # If some NaNs, raise so user can inspect label CSV
+        raise ValueError("Some labels could not be parsed as numeric 0/1 in label column. Check labels CSV.")
+    qual = qual.astype(int)
+
     return {0: pid[qual == 0].tolist(), 1: pid[qual == 1].tolist()}
 
 
 def cohen_d_paired(a, b):
-    diff = np.asarray(a - b).reshape(-1)
+    a = np.asarray(a, dtype=float).reshape(-1)
+    b = np.asarray(b, dtype=float).reshape(-1)
+    mask = ~np.logical_or(np.isnan(a), np.isnan(b))
+    if mask.sum() < 2:
+        return np.nan
+    diff = a[mask] - b[mask]
     sd = diff.std(ddof=1)
     return np.nan if sd == 0 else diff.mean() / sd
 
@@ -41,6 +82,7 @@ def hedges_g_paired(d, n):
 
 
 def bh_fdr(pvals):
+    # keep this helper but we'll prefer statsmodels.fdrcorrection for final accuracy
     p = np.asarray(pvals, dtype=float)
     if p.size == 0:
         return p
@@ -107,37 +149,102 @@ def discover_feature_files(root, methods=methods):
 
 
 def descriptive_by_feature(merged, base_feats):
+    """
+    For each base feature (e.g., 'ch01_delta'), compute:
+      - descriptive stats for rest and task
+      - paired t-test
+      - Shapiro test on differences (if n >= 3)
+      - Wilcoxon fallback if non-normal (and feasible)
+      - Cohen's d, Hedges' g
+      - 95% CI for mean difference
+    After computing p-values we will apply FDR correction outside (so we return raw analysis p-values).
+    """
     rows = []
     n_pairs = merged.shape[0]
+
     for f in base_feats:
         a = merged[f + "_task"].to_numpy(dtype=float)
         b = merged[f + "_rest"].to_numpy(dtype=float)
-        diff = a - b
+        # mask pairs where either is nan
+        mask = ~np.logical_or(np.isnan(a), np.isnan(b))
+        valid_n = int(mask.sum())
 
-        mean_rest = float(np.nanmean(b)); sd_rest = float(np.nanstd(b, ddof=1))
-        mean_task = float(np.nanmean(a)); sd_task = float(np.nanstd(a, ddof=1))
-        mean_diff = float(np.nanmean(diff)); sd_diff = float(np.nanstd(diff, ddof=1))
+        diff = (a - b)[mask] if valid_n > 0 else np.array([])
 
-        t_stat, p_val = ttest_rel(a, b, nan_policy="omit")
+        mean_rest = float(np.nanmean(b)) if valid_n > 0 else np.nan
+        sd_rest = float(np.nanstd(b, ddof=1)) if valid_n > 1 else np.nan
+        mean_task = float(np.nanmean(a)) if valid_n > 0 else np.nan
+        sd_task = float(np.nanstd(a, ddof=1)) if valid_n > 1 else np.nan
+        mean_diff = float(np.nanmean(diff)) if valid_n > 0 else np.nan
+        sd_diff = float(np.nanstd(diff, ddof=1)) if valid_n > 1 else np.nan
+
+        # paired t-test (operate on full arrays but nan_policy omitted by ttest_rel, use mask selection)
+        if valid_n >= 2:
+            try:
+                t_stat, p_val_t = ttest_rel(a[mask], b[mask])
+            except Exception:
+                t_stat, p_val_t = np.nan, np.nan
+        else:
+            t_stat, p_val_t = np.nan, np.nan
+
+        # Shapiro's normality test on differences when sample size >= 3 (scipy's shapiro needs n>=3)
+        sh_p = np.nan
+        if valid_n >= 3:
+            try:
+                sh_p = float(shapiro(diff)[1])
+            except Exception:
+                sh_p = np.nan
+
+        # Wilcoxon fallback if non-normal and at least 2 paired samples
+        wil_p = np.nan
+        wil_stat = np.nan
+        use_wilcoxon = False
+        if valid_n >= 2 and not np.isnan(sh_p) and sh_p < 0.05:
+            # attempt Wilcoxon (two-sided)
+            try:
+                # wilcoxon requires paired arrays with more than zero non-zero diffs in some SciPy versions:
+                wil_stat, wil_p = wilcoxon(a[mask], b[mask])
+                use_wilcoxon = True
+            except Exception:
+                wil_stat, wil_p = np.nan, np.nan
+                use_wilcoxon = False
+
+        # Decide which p to use for multiple comparison correction (prefer Wilcoxon when used)
+        analysis_p = wil_p if use_wilcoxon and not np.isnan(wil_p) else p_val_t
+
         d_val = cohen_d_paired(a, b)
         g_val = hedges_g_paired(d_val, n_pairs)
 
-        if n_pairs > 1 and not np.isnan(sd_diff):
-            se = sd_diff / np.sqrt(n_pairs)
-            tcrit = t.ppf(0.975, df=n_pairs - 1)
+        # CI for mean difference (t-based) when enough samples
+        if valid_n > 1 and not np.isnan(sd_diff):
+            se = sd_diff / np.sqrt(valid_n)
+            tcrit = t.ppf(0.975, df=valid_n - 1)
             ci_low = float(mean_diff - tcrit * se)
             ci_high = float(mean_diff + tcrit * se)
         else:
-            ci_low = np.nan; ci_high = np.nan
+            ci_low = np.nan
+            ci_high = np.nan
 
-        rows.append((f, n_pairs, mean_rest, sd_rest, mean_task, sd_task,
-                     mean_diff, sd_diff, float(t_stat), float(p_val), d_val, g_val, ci_low, ci_high))
+        rows.append((
+            f, valid_n,
+            mean_rest, sd_rest, mean_task, sd_task,
+            mean_diff, sd_diff, float(t_stat), float(p_val_t),
+            sh_p, wil_stat, wil_p, bool(use_wilcoxon),
+            float(d_val) if not np.isnan(d_val) else np.nan,
+            float(g_val) if not np.isnan(g_val) else np.nan,
+            ci_low, ci_high,
+            float(analysis_p) if not np.isnan(analysis_p) else np.nan
+        ))
 
-    return pd.DataFrame(rows, columns=[
+    cols = [
         "feature", "n",
         "mean_rest", "sd_rest", "mean_task", "sd_task",
-        "mean_diff", "sd_diff", "t", "p", "d_paired", "g_paired", "ci95_low", "ci95_high"
-    ])
+        "mean_diff", "sd_diff", "t", "p_t",
+        "shapiro_p", "wilcoxon_stat", "p_wilcoxon", "wilcoxon_used",
+        "d_paired", "g_paired", "ci95_low", "ci95_high",
+        "analysis_p"
+    ]
+    return pd.DataFrame(rows, columns=cols)
 
 
 def run_group_full_stats(rest_df, task_df, group_ids):
@@ -151,7 +258,29 @@ def run_group_full_stats(rest_df, task_df, group_ids):
     base_feats = [c[:-5] for c in feat_cols_rest if (c[:-5] + "_task") in merged.columns]
 
     stats_df = descriptive_by_feature(merged, base_feats)
-    stats_df["p_fdr"] = bh_fdr(stats_df["p"].to_numpy())
+
+    # Multiple comparison correction (Benjamini-Hochberg) on analysis_p
+    # Use statsmodels.fdrcorrection which returns reject boolean array and corrected p-values
+    pvals = stats_df["analysis_p"].to_numpy(dtype=float)
+    # Some features may have NaN p-values (insufficient data). fdrcorrection does not accept NaNs.
+    # We'll operate on the non-NaN subset, then put results back
+    valid_mask = ~np.isnan(pvals)
+    corrected = np.full_like(pvals, np.nan, dtype=float)
+    rejects = np.full_like(pvals, False, dtype=bool)
+    if valid_mask.sum() > 0:
+        try:
+            rej, p_corr = fdrcorrection(pvals[valid_mask], alpha=0.05, method='indep')
+            corrected[valid_mask] = p_corr
+            rejects[valid_mask] = rej
+        except Exception:
+            # fallback to local BH implementation if something goes wrong
+            corrected_vals = bh_fdr(pvals[valid_mask])
+            corrected[valid_mask] = corrected_vals
+            rejects[valid_mask] = corrected_vals < 0.05
+
+    stats_df["p_fdr"] = corrected
+    stats_df["reject_fdr"] = rejects
+
     stats_df = stats_df.sort_values(by=["p_fdr", "t"], ascending=[True, False]).reset_index(drop=True)
     return stats_df
 
@@ -164,6 +293,10 @@ def process_method(method_name, rest_files, task_files, labels_dict):
     task_df = stack_features(task_files)
     if rest_df.empty or task_df.empty:
         return pd.DataFrame()
+
+    # ensure participant_id type consistency
+    rest_df['participant_id'] = rest_df['participant_id'].astype(int)
+    task_df['participant_id'] = task_df['participant_id'].astype(int)
 
     feats_rest = [c for c in rest_df.columns if c != "participant_id"]
     feats_task = [c for c in task_df.columns if c != "participant_id"]
@@ -187,7 +320,10 @@ def process_method(method_name, rest_files, task_files, labels_dict):
         return pd.DataFrame(columns=[
             "method", "feature", "label_group", "n",
             "mean_rest", "sd_rest", "mean_task", "sd_task",
-            "mean_diff", "sd_diff", "t", "p", "d_paired", "g_paired", "ci95_low", "ci95_high", "p_fdr"
+            "mean_diff", "sd_diff", "t", "p_t",
+            "shapiro_p", "wilcoxon_stat", "p_wilcoxon", "wilcoxon_used",
+            "d_paired", "g_paired", "ci95_low", "ci95_high",
+            "analysis_p", "p_fdr", "reject_fdr"
         ])
 
     full = pd.concat(method_frames, axis=0, ignore_index=True)
