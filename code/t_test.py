@@ -2,7 +2,6 @@ from pathlib import Path
 import os
 import json
 import re
-
 import pandas as pd
 import numpy as np
 from scipy.stats import ttest_rel, t, shapiro, wilcoxon
@@ -14,7 +13,7 @@ root_feature_dir = Path(r"E:\AUT\thesis\files\features")
 
 methods = ("STFT", "CWT", "EMD")
 n_channels = 19
-band_names = ["delta", "theta", "alpha", "beta", "gamma"]  # ensure this matches your file column order
+band_names = ["delta", "theta", "alpha", "beta", "gamma"]
 
 
 def extract_id(path):
@@ -27,39 +26,9 @@ def extract_id(path):
 
 def id_label_extraction(labels_csv):
     df = pd.read_csv(labels_csv, header=0)
-    # try to be flexible but keep your original approach: first column for ids, 6th column for label if not otherwise found
-    possible_pid_cols = ['participant', 'id', 'subject', 'subj', 'PID']
-    possible_label_cols = ['quality', 'qual', 'good_bad', 'accurate_count_label', 'label', 'quality_flag']
-
-    pid_col = None
-    for c in df.columns:
-        if any(p.lower() in str(c).lower() for p in possible_pid_cols):
-            pid_col = c
-            break
-    if pid_col is None:
-        pid_col = df.columns[0]
-
-    label_col = None
-    for c in df.columns:
-        if any(p.lower() in str(c).lower() for p in possible_label_cols):
-            label_col = c
-            break
-    if label_col is None:
-        # fallback to original hard-coded index if present
-        if df.shape[1] > 5:
-            label_col = df.columns[5]
-        else:
-            raise ValueError("Cannot find label column in labels_csv; provide a CSV with an appropriate label column.")
-
-    col0 = df[pid_col].astype(str).str.strip()
+    col0 = df.iloc[:, 0].astype(str).str.strip()
     pid = col0.str.extract(r'(\d{2})', expand=False).astype(int)
-
-    qual = pd.to_numeric(df[label_col], errors="coerce")
-    if qual.isna().any():
-        # If some NaNs, raise so user can inspect label CSV
-        raise ValueError("Some labels could not be parsed as numeric 0/1 in label column. Check labels CSV.")
-    qual = qual.astype(int)
-
+    qual = pd.to_numeric(df.iloc[:, 5], errors="coerce").astype(int)  # 0/1
     return {0: pid[qual == 0].tolist(), 1: pid[qual == 1].tolist()}
 
 
@@ -82,7 +51,7 @@ def hedges_g_paired(d, n):
 
 
 def bh_fdr(pvals):
-    # keep this helper but we'll prefer statsmodels.fdrcorrection for final accuracy
+    # keep this helper, but we'll prefer statsmodels.fdrcorrection for final accuracy
     p = np.asarray(pvals, dtype=float)
     if p.size == 0:
         return p
