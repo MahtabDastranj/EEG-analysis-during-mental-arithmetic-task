@@ -48,7 +48,6 @@ def id_label_extraction(labels_csv):
     summary_df = pd.DataFrame({
         "participant_id": pid,
         "group_label": qual,
-        "group_name": qual.map({0: "Bad Counter", 1: "Good Counter"})
     })
 
     return label_dict, summary_df
@@ -256,7 +255,6 @@ def process_method(method_name, rest_files, task_files, labels_dict):
     full = pd.concat(method_frames, axis=0, ignore_index=True)
     full.insert(0, "method", method_name)
     return full
-
 
 
 def main():
