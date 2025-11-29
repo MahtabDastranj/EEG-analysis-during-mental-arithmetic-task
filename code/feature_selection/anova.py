@@ -3,7 +3,7 @@ import os
 import re
 import pandas as pd
 import numpy as np
-from scipy.stats import friedmanchisquare, wilcoxon
+from scipy.stats import friedmanchisquare
 import warnings
 
 

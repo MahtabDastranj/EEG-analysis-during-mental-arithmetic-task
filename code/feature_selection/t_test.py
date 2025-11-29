@@ -6,7 +6,6 @@ import numpy as np
 from scipy.stats import wilcoxon, norm
 from statsmodels.stats.multitest import fdrcorrection
 
-# Update these paths to match your actual folders
 out_dir = Path(r'E:\AUT\thesis\files\feature_reduction')
 labels_csv = Path(r"/subject-info.csv")
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
