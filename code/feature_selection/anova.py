@@ -8,7 +8,7 @@ import warnings
 
 
 out_dir = Path(r'E:\AUT\thesis\files\method_comparison')
-labels_csv = Path(r"E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv")
+labels_csv = Path(r"/subject-info.csv")
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
 
 methods = ("STFT", "CWT", "EMD")
@@ -152,10 +152,6 @@ def analyze_condition_group(data_map, group_ids, state, feature_list):
     return pd.DataFrame(results)
 
 
-# ==========================================
-# MAIN EXECUTION
-# ==========================================
-
 def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -208,7 +204,6 @@ def main():
                 'EMD': raw_data['EMD'][state]
             }
 
-            # Run Analysis
             results_df = analyze_condition_group(state_data_map, ids, state, sorted_features)
 
             if not results_df.empty:
