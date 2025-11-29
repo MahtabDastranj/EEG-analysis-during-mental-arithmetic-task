@@ -6,8 +6,8 @@ import numpy as np
 from scipy.stats import wilcoxon, norm
 from statsmodels.stats.multitest import fdrcorrection
 
-out_dir = Path(r'E:\AUT\thesis\files\feature_reduction')
-labels_csv = Path(r"/subject-info.csv")
+out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\t-test")
+labels_csv = Path(r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv')
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
 
 methods = ("STFT", "CWT", "EMD")

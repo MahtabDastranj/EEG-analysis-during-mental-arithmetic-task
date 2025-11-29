@@ -6,10 +6,9 @@ import numpy as np
 from scipy.stats import friedmanchisquare
 import warnings
 
-
-out_dir = Path(r'E:\AUT\thesis\files\method_comparison')
-labels_csv = Path(r"/subject-info.csv")
-root_feature_dir = Path(r"E:\AUT\thesis\files\features")
+out_dir = r'E:\AUT\thesis\files\feature_reduction\method_comparison'
+labels_csv = r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv'
+root_feature_dir = r"E:\AUT\thesis\files\features"
 
 methods = ("STFT", "CWT", "EMD")
 n_channels = 19
