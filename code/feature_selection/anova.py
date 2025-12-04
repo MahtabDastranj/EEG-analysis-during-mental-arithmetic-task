@@ -1,218 +1,148 @@
-from pathlib import Path
-import os
-import re
 import pandas as pd
 import numpy as np
-from scipy.stats import friedmanchisquare
-import warnings
+from scipy.stats import friedmanchisquare, wilcoxon
+from pathlib import Path
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-out_dir = r'E:\AUT\thesis\files\feature_reduction\method_comparison'
-labels_csv = r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv'
-root_feature_dir = r"E:\AUT\thesis\files\features"
-
-methods = ("STFT", "CWT", "EMD")
-n_channels = 19
-band_names = ["delta", "theta", "alpha", "beta", "gamma"]
-
-# Suppress warnings for cleaner output
-warnings.filterwarnings("ignore")
+# Update this path to where your 'Results_MASTER_ALL.csv' is located
+results_file = Path(r"E:\AUT\thesis\files\feature_reduction\Results_MASTER_ALL.csv")
+out_dir = results_file.parent
 
 
-def extract_id(path):
-    stem = Path(path).stem
-    m = re.search(r'(\d{2})', stem)
-    if not m:
-        raise ValueError(f"Cannot extract 2-digit participant id from filename: {stem}")
-    return int(m.group(1))
+def run_sensitivity_comparison(df, group_name):
+    print(f"\n{'=' * 60}")
+    print(f"ANALYZING METHOD SENSITIVITY: {group_name}")
+    print(f"Goal: Compare performance despite different scales (STFT/CWT/EMD)")
+    print(f"{'=' * 60}")
+
+    # 1. Filter Data for this specific Group (e.g., 'Good_Counters')
+    group_df = df[df["group"] == group_name].copy()
+
+    # 2. Pivot the Data
+    # Rows = The specific Brain Feature (e.g., ch01_alpha)
+    # Columns = The 3 Methods (STFT, CWT, EMD)
+    # Values = 'effect_size_r'
+    # CRITICAL STEP: We use Effect Size (0-1) instead of raw amounts
+    # because raw amounts are in different units (Power vs Amplitude vs Ratio).
+    pivot_df = group_df.pivot(index="feature", columns="method", values="effect_size_r")
+
+    # 3. Clean Data
+    # We must drop any feature that wasn't successfully calculated for ALL 3 methods
+    # to ensures a fair paired comparison (Friedman requires this).
+    original_len = len(pivot_df)
+    pivot_df = pivot_df.dropna()
+    print(f"Features included in comparison: {len(pivot_df)}")
+    if original_len != len(pivot_df):
+        print(f"Note: Dropped {original_len - len(pivot_df)} features due to missing data.")
+
+    # 4. Descriptive Stats (Mean Sensitivity)
+    print("\n[Average Sensitivity (Effect Size r)]")
+    # This shows which method is 'strongest' on average
+    print(pivot_df.mean().sort_values(ascending=False))
+
+    # 5. The Friedman Test (Non-Parametric ANOVA for Repeated Measures)
+    # H0: All methods provide the same distribution of sensitivity.
+    stat, p = friedmanchisquare(
+        pivot_df['STFT'],
+        pivot_df['CWT'],
+        pivot_df['EMD']
+    )
+
+    print(f"\n[Friedman Test Results]")
+    print(f"Chi-Square Statistic: {stat:.3f}")
+    print(f"P-Value: {p:.5e}")  # Scientific notation (e.g., 1.2e-05)
+
+    # 6. Post-Hoc Analysis (Only run if Friedman is Significant)
+    if p < 0.05:
+        print("\n>> RESULT: Significant Difference Found! (p < 0.05)")
+        print(">> Performing Pairwise Wilcoxon Tests to find the winner...")
+
+        # We compare every pair: STFT vs CWT, STFT vs EMD, CWT vs EMD
+        pairs = [('STFT', 'CWT'), ('STFT', 'EMD'), ('CWT', 'EMD')]
+
+        # Bonferroni Correction: We are making 3 comparisons, so we divide alpha by 3.
+        # Standard Alpha = 0.05 -> Corrected Alpha = 0.0167
+        alpha_corrected = 0.05 / 3
+        print(f"   (Bonferroni Corrected Significance Threshold: p < {alpha_corrected:.4f})")
+        print("-" * 50)
+
+        for m1, m2 in pairs:
+            # Wilcoxon Signed-Rank Test on the Effect Sizes
+            w_stat, w_p = wilcoxon(pivot_df[m1], pivot_df[m2])
+
+            mean_diff = pivot_df[m1].mean() - pivot_df[m2].mean()
+            winner = m1 if mean_diff > 0 else m2
+
+            is_sig = w_p < alpha_corrected
+
+            sig_label = "SIGNIFICANT" if is_sig else "Not Sig"
+            print(f"   {m1} vs {m2}:")
+            print(f"     p-value: {w_p:.5f} [{sig_label}]")
+            if is_sig:
+                print(f"     >> WINNER: {winner} (Diff: {abs(mean_diff):.3f})")
+            print("-" * 50)
+
+    else:
+        print("\n>> RESULT: No significant difference. All methods are equally sensitive.")
+
+    # 7. Visualization (Violin Plot)
+    # This visualizes the distribution of 'r' values side-by-side
+    plt.figure(figsize=(10, 6))
+
+    # Violin plot shows density; Swarm plot shows actual data points
+    sns.violinplot(data=pivot_df, inner="quartile", palette="muted")
+    sns.swarmplot(data=pivot_df, color="k", size=1.5, alpha=0.5)
+
+    plt.title(f"Method Sensitivity Comparison\nGroup: {group_name}", fontsize=14)
+    plt.ylabel("Effect Size (r)\n(Higher is Better)", fontsize=12)
+    plt.xlabel("Feature Extraction Method", fontsize=12)
+    plt.ylim(0, 1.0)  # r is always between 0 and 1
+
+    # Annotate with Friedman P-value
+    plt.annotate(f"Friedman p = {p:.1e}",
+                 xy=(0.5, 0.95), xycoords='axes fraction',
+                 ha='center', fontsize=10,
+                 bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="black", alpha=0.8))
+
+    # Save Graph
+    save_path = out_dir / f"Method_Comparison_Graph_{group_name}.png"
+    plt.savefig(save_path, dpi=300)
+    print(f"\nGraph saved to: {save_path}")
+    plt.show()
 
 
-def id_label_extraction(labels_csv):
-    df = pd.read_csv(labels_csv, header=0)
-    col0 = df.iloc[:, 0].astype(str).str.strip()
-    pid = col0.str.extract(r'(\d{2})', expand=False).astype(int)
-    qual = pd.to_numeric(df.iloc[:, 5], errors="coerce").astype(int)
-    return {0: pid[qual == 0].tolist(), 1: pid[qual == 1].tolist()}
-
-
-def channel_labels(n):
-    return [f"ch{idx:02d}" for idx in range(1, n + 1)]
-
-
-def read_features(path):
-    mat = pd.read_csv(path, header=None)
-    if mat.shape != (n_channels, len(band_names)):
-        return None
-    mat.columns = band_names
-    mat.index = channel_labels(n_channels)
-
-    flat = {}
-    for ch in mat.index:
-        for band in band_names:
-            flat[f"{ch}_{band}"] = float(mat.at[ch, band])
-
-    pid = extract_id(path)
-    row = {"participant_id": pid}
-    row.update(flat)
-    return pd.DataFrame([row])
-
-
-def stack_features(paths):
-    if not paths:
-        return pd.DataFrame()
-    rows = [read_features(p) for p in sorted(paths)]
-    rows = [r for r in rows if r is not None]  # Filter bad reads
-    if not rows:
-        return pd.DataFrame()
-
-    all_df = pd.concat(rows, axis=0, ignore_index=True)
-    num_cols = ["participant_id"] + [c for c in all_df.columns if c != "participant_id"]
-    agg = all_df[num_cols].groupby("participant_id", as_index=False).mean(numeric_only=True)
-    return agg
-
-
-def find_files(method_root):
-    rest_files, task_files = [], []
-    for dirpath, _, filenames in os.walk(method_root):
-        for fn in filenames:
-            if not fn.lower().endswith(".csv"):
-                continue
-            fpath = Path(dirpath) / fn
-            if "rest" in str(fpath).lower():
-                rest_files.append(fpath)
-            else:
-                task_files.append(fpath)
-    return {"rest": rest_files, "task": task_files}
-
-
-def run_friedman_on_triplet(df_stft, df_cwt, df_emd, feature_name):
-    """
-    Runs Friedman test on 3 matched vectors (STFT, CWT, EMD) for one feature.
-    """
-    # Align data by index (Participant ID) to ensure we compare the SAME person
-    # Inner join: only keep participants present in ALL 3 methods
-    aligned = pd.concat([df_stft, df_cwt, df_emd], axis=1, join='inner')
-
-    # After concat, columns are [feature, feature, feature].
-    # We assume the order matches STFT, CWT, EMD because of concat order.
-
-    if aligned.shape[0] < 5:  # Need at least 5 subjects for a test
-        return np.nan, np.nan, "Insufficient Data"
-
-    vec_stft = aligned.iloc[:, 0].to_numpy()
-    vec_cwt = aligned.iloc[:, 1].to_numpy()
-    vec_emd = aligned.iloc[:, 2].to_numpy()
-
-    # The Friedman Test
-    stat, p = friedmanchisquare(vec_stft, vec_cwt, vec_emd)
-
-    # Simple Logic for "Winner" (Highest Median)
-    medians = {'STFT': np.median(vec_stft), 'CWT': np.median(vec_cwt), 'EMD': np.median(vec_emd)}
-    winner = max(medians, key=medians.get)
-
-    return stat, p, winner
-
-
-def analyze_condition_group(data_map, group_ids, state, feature_list):
-    """
-    data_map: {'STFT': df, 'CWT': df, 'EMD': df} for the specific state
-    """
-    results = []
-
-    # 1. Filter all DataFrames for this Group ID list
-    filtered_map = {}
-    for method in methods:
-        df = data_map[method]
-        # Keep only rows where participant_id is in group_ids
-        sub_df = df[df['participant_id'].isin(group_ids)].set_index('participant_id')
-        filtered_map[method] = sub_df
-
-    # 2. Loop through every feature (ch01_delta, etc.)
-    for feat in feature_list:
-        try:
-            # Extract just that feature column from each method
-            s = filtered_map['STFT'][feat]
-            c = filtered_map['CWT'][feat]
-            e = filtered_map['EMD'][feat]
-
-            stat, p, winner = run_friedman_on_triplet(s, c, e, feat)
-
-            results.append({
-                "feature": feat,
-                "n_subjects": s.shape[0],  # Using STFT count as proxy (aligned)
-                "friedman_stat": stat,
-                "p_value": p,
-                "significant": p < 0.05 if not np.isnan(p) else False,
-                "highest_method": winner
-            })
-        except KeyError:
-            # Feature missing in one of the files
-            continue
-
-    return pd.DataFrame(results)
-
-
+# ==========================================
+# MAIN EXECUTION
+# ==========================================
 def main():
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if not results_file.exists():
+        print(f"CRITICAL ERROR: File not found at {results_file}")
+        print("Please ensure you run the feature analysis code first to generate Results_MASTER_ALL.csv")
+        return
 
-    # 1. Load Groups
-    labels_dict = id_label_extraction(labels_csv)
-    group_names = {0: "Bad_Counters", 1: "Good_Counters"}
+    print(f"Loading Master Results from: {results_file}")
+    df = pd.read_csv(results_file)
 
-    # 2. Load Raw Data into Memory
-    # Structure: raw_data['STFT']['rest'] -> DataFrame
-    print("Loading raw feature data...")
-    raw_data = {}
+    # Check what groups exist in the file
+    available_groups = df["group"].unique()
+    print(f"Found Groups: {available_groups}")
 
-    # We need to discover common features across all files
-    all_features = set()
+    # Run for Good Counters
+    if "Good_Counters" in available_groups:
+        run_sensitivity_comparison(df, "Good_Counters")
+    elif any("Good" in g for g in available_groups):
+        # Fallback search for partial match
+        g_name = next(g for g in available_groups if "Good" in g)
+        run_sensitivity_comparison(df, g_name)
 
-    for m in methods:
-        raw_data[m] = {}
-        files = find_files(root_feature_dir / m)
-
-        # Load Rest
-        print(f"  Loading {m} Rest...")
-        df_rest = stack_features(files['rest'])
-        raw_data[m]['rest'] = df_rest
-
-        # Load Task
-        print(f"  Loading {m} Task...")
-        df_task = stack_features(files['task'])
-        raw_data[m]['task'] = df_task
-
-        # Track feature names
-        if not df_rest.empty:
-            feats = [c for c in df_rest.columns if c != 'participant_id']
-            all_features.update(feats)
-
-    sorted_features = sorted(list(all_features))
-    print(f"Found {len(sorted_features)} features to compare.")
-
-    # 3. The Grand Loop: Group -> State -> Analysis
-    for group_code, group_name in group_names.items():
-        ids = labels_dict.get(group_code, [])
-        print(f"\nAnalyzing Group: {group_name} (N={len(ids)})")
-
-        for state in ['rest', 'task']:
-            print(f"  State: {state.upper()}")
-
-            # Prepare map for this specific state
-            state_data_map = {
-                'STFT': raw_data['STFT'][state],
-                'CWT': raw_data['CWT'][state],
-                'EMD': raw_data['EMD'][state]
-            }
-
-            results_df = analyze_condition_group(state_data_map, ids, state, sorted_features)
-
-            if not results_df.empty:
-                # Save File
-                filename = f"Comparison_{group_name}_{state.upper()}.csv"
-                save_path = out_dir / filename
-                results_df.to_csv(save_path, index=False)
-                print(f"    Saved: {filename}")
-
-    print("\nProcessing Complete.")
+    # Run for Bad Counters
+    if "Bad_Counters" in available_groups:
+        run_sensitivity_comparison(df, "Bad_Counters")
+    elif any("Bad" in g for g in available_groups):
+        # Fallback search for partial match
+        g_name = next(g for g in available_groups if "Bad" in g)
+        run_sensitivity_comparison(df, g_name)
 
 
 if __name__ == "__main__":
