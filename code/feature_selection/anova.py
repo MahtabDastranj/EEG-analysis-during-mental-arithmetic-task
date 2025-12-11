@@ -5,7 +5,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Update this path to where your 'Results_MASTER_ALL.csv' is located
 results_file = Path(r"E:\AUT\thesis\files\feature_reduction\Results_MASTER_ALL.csv")
 out_dir = results_file.parent
 
