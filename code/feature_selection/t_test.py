@@ -108,7 +108,7 @@ def discover_feature_files(root, methods=methods):
 def descriptive_by_feature(merged, base_feats):
     """
     Calculates Descriptive Stats, Wilcoxon Test, and Effect Size (r).
-    MODIFIED: Includes robust effect size calculation using Z-score.
+    MODIFIED: Added 'direction' column to show if Task > Rest or Rest > Task.
     """
     rows = []
 
@@ -129,35 +129,36 @@ def descriptive_by_feature(merged, base_feats):
         mean_diff = float(np.nanmean(diff)) if valid_n > 0 else np.nan
         sd_diff = float(np.nanstd(diff, ddof=1)) if valid_n > 1 else np.nan
 
+        # --- DETERMINING DIRECTION ---
+        # Positive diff means Task was higher than Rest (Activation/Increase)
+        direction = "Task > Rest" if mean_diff > 0 else "Rest > Task" if mean_diff < 0 else "No Change"
+
         # --- WILCOXON SIGNED-RANK TEST ---
         wil_stat = np.nan
         p_val = np.nan
         effect_size_r = np.nan
 
-        if valid_n >= 5: # Lowered to 5 to accommodate small 'Bad' group
+        if valid_n >= 5:
             try:
-                # Use 'approx' to ensure we can calculate a Z-score for r
                 res = wilcoxon(a[mask], b[mask], zero_method='wilcox', method='approx')
                 wil_stat = res.statistic
                 p_val = res.pvalue
 
                 # --- EFFECT SIZE (r = |Z| / sqrt(N)) ---
-                # Since we used method='approx', we derive Z from the p-value
                 z_score = np.abs(norm.ppf(p_val / 2))
                 effect_size_r = z_score / np.sqrt(valid_n)
-
             except Exception:
                 pass
 
         rows.append((
-            f, valid_n,
+            f, valid_n, direction,
             mean_rest, sd_rest, mean_task, sd_task,
             mean_diff, sd_diff,
             wil_stat, float(p_val), float(effect_size_r)
         ))
 
     cols = [
-        "feature", "n",
+        "feature", "n", "direction",
         "mean_rest", "sd_rest", "mean_task", "sd_task",
         "mean_diff", "sd_diff",
         "wilcoxon_stat", "p_val", "effect_size_r"
