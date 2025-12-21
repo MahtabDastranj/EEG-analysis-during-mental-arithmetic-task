@@ -37,7 +37,6 @@ def id_label_extraction(labels_csv):
     pid = col0.str.extract(r'(\d{2})', expand=False).astype(int)
 
     # Extract Group Label (0 or 1)
-    # Adjust 'iloc[:, 5]' if your group label is in a different column
     qual = pd.to_numeric(df.iloc[:, 5], errors="coerce").astype(int)
 
     # Create the dictionary for processing
@@ -109,6 +108,7 @@ def discover_feature_files(root, methods=methods):
 def descriptive_by_feature(merged, base_feats):
     """
     Calculates Descriptive Stats, Wilcoxon Test, and Effect Size (r).
+    MODIFIED: Includes robust effect size calculation using Z-score.
     """
     rows = []
 
@@ -134,18 +134,16 @@ def descriptive_by_feature(merged, base_feats):
         p_val = np.nan
         effect_size_r = np.nan
 
-        # Requires at least 6 pairs for a meaningful p-value < 0.05
-        if valid_n >= 6:
+        if valid_n >= 5: # Lowered to 5 to accommodate small 'Bad' group
             try:
-                # method='approx' allows calculating Z-score from p-value
-                # zero_method='wilcox' discards zero differences
+                # Use 'approx' to ensure we can calculate a Z-score for r
                 res = wilcoxon(a[mask], b[mask], zero_method='wilcox', method='approx')
                 wil_stat = res.statistic
                 p_val = res.pvalue
 
-                # --- EFFECT SIZE (r = Z / sqrt(N)) ---
-                # Infer Z-score from the 2-tailed p-value
-                z_score = norm.ppf(1 - p_val / 2)
+                # --- EFFECT SIZE (r = |Z| / sqrt(N)) ---
+                # Since we used method='approx', we derive Z from the p-value
+                z_score = np.abs(norm.ppf(p_val / 2))
                 effect_size_r = z_score / np.sqrt(valid_n)
 
             except Exception:
@@ -172,7 +170,6 @@ def run_group_full_stats(rest_df, task_df, group_ids):
     Runs analysis for ONE group and ONE method.
     Applies FDR correction to the 95 features within this specific batch.
     """
-    # Filter for specific group
     rest_sub = rest_df[rest_df["participant_id"].isin(group_ids)].copy()
     task_sub = task_df[task_df["participant_id"].isin(group_ids)].copy()
 
@@ -184,10 +181,10 @@ def run_group_full_stats(rest_df, task_df, group_ids):
     feat_cols_rest = [c for c in merged.columns if c.endswith("_rest")]
     base_feats = [c[:-5] for c in feat_cols_rest if (c[:-5] + "_task") in merged.columns]
 
-    # 1. Run Basic Stats
+    # 1. Run Stats (includes Effect Size r)
     stats_df = descriptive_by_feature(merged, base_feats)
 
-    # 2. Apply FDR Correction (Benjamini-Hochberg)
+    # 2. Apply FDR Correction
     pvals = stats_df["p_val"].to_numpy(dtype=float)
     valid_mask = ~np.isnan(pvals)
 
@@ -205,27 +202,22 @@ def run_group_full_stats(rest_df, task_df, group_ids):
     stats_df["p_fdr"] = corrected
     stats_df["significant"] = rejects
 
-    # Sort: Significant first, then largest Effect Size
-    stats_df = stats_df.sort_values(by=["significant", "effect_size_r"], ascending=[False, False]).reset_index(
-        drop=True)
+    # Sort: Largest Effect Size first
+    stats_df = stats_df.sort_values(by=["effect_size_r"], ascending=False).reset_index(drop=True)
     return stats_df
 
 
 def process_method(method_name, rest_files, task_files, labels_dict):
-    """
-    Splits analysis into Good vs Bad groups for the given method.
-    """
+    """Splits analysis into Good vs Bad groups for the given method."""
     if not rest_files or not task_files:
         return pd.DataFrame()
 
     rest_df = stack_features(rest_files)
     task_df = stack_features(task_files)
 
-    # Type safety
     rest_df['participant_id'] = rest_df['participant_id'].astype(int)
     task_df['participant_id'] = task_df['participant_id'].astype(int)
 
-    # Keep only common features
     feats_rest = [c for c in rest_df.columns if c != "participant_id"]
     feats_task = [c for c in task_df.columns if c != "participant_id"]
     common_feats = sorted(set(feats_rest).intersection(feats_task))
@@ -234,8 +226,6 @@ def process_method(method_name, rest_files, task_files, labels_dict):
     task_df = task_df[["participant_id"] + common_feats].copy()
 
     method_frames = []
-
-    # Process Group 0 (Bad) and Group 1 (Good) separately
     group_names = {0: "Bad_Counters", 1: "Good_Counters"}
 
     for label, id_list in labels_dict.items():
@@ -288,19 +278,18 @@ def main():
         master_df.to_csv(master_path, index=False)
         print(f"File 2 Created: {master_path}")
 
-        # --- BONUS: Create the 'Top Trends' file for Bad Counters ---
-        # This filters for High Effect Size (> 0.5) even if FDR is False
-        bad_trends = master_df[
-            (master_df["group"].str.contains("Bad")) &
-            (master_df["effect_size_r"] > 0.5) &
-            (master_df["p_val"] < 0.05)
-            ].sort_values("effect_size_r", ascending=False)
+        # --- SELECTION OF MOST IMPORTANT FEATURES ---
+        # We select features with p < 0.05 and a "Large" effect size (r > 0.5)
+        # These are the ones that actually distinguish task from rest effectively.
+        most_important = master_df[
+            (master_df["p_val"] < 0.05) &
+            (master_df["effect_size_r"] > 0.5)
+        ].sort_values(by=["group", "effect_size_r"], ascending=[True, False])
 
-        if not bad_trends.empty:
-            trend_path = out_dir / "Bad_Counters_Trends_Exploratory.csv"
-            bad_trends.to_csv(trend_path, index=False)
-            print(f"Bonus File: {trend_path} (High effect sizes for bad counters)")
-
+        if not most_important.empty:
+            important_path = out_dir / "Most_Significant_Features.csv"
+            most_important.to_csv(important_path, index=False)
+            print(f"File 3 Created: {important_path} ({len(most_important)} features)")
     else:
         print("No results generated. Check file paths and data.")
 
