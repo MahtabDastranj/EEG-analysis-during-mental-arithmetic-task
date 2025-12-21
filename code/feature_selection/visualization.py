@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 
 path = Path(r"E:\AUT\thesis\files\feature_reduction\t-test\Results.csv")
-df = pd.read_csv('Results.csv')
+df = pd.read_csv(path)
 
 # 2. Pre-process: Split the 'feature' column into 'channel' and 'band'
 # Example: 'ch01_theta' becomes channel='ch01', band='theta'
