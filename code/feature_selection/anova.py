@@ -24,28 +24,27 @@ def extract_id(path):
 
 
 def channel_labels(n):
+    """Generates labels like ch01, ch02..."""
     return [f"ch{idx:02d}" for idx in range(1, n + 1)]
 
 
 def read_and_normalize_features(path):
     """
-    Reads a 19x5 feature file.
-    Normalizes each channel to relative power (sum of bands = 1)
-    to ensure STFT, CWT, and EMD are on the same scale for comparison.
+    Reads a feature file and normalizes to Relative Power.
+    This ensures all methods are on the same scale (0 to 1) for comparison.
     """
     mat = pd.read_csv(path, header=None)
     if mat.shape != (n_channels, len(band_names)):
         return None
 
-    # Convert to Relative Power (Important for ANOVA between methods)
-    # Each row (channel) will sum to 1.0
+    # Row-wise normalization (Relative Power)
     row_sums = mat.sum(axis=1).values[:, np.newaxis]
-    row_sums[row_sums == 0] = 1e-12  # Avoid division by zero
+    row_sums[row_sums == 0] = 1e-12
     mat_norm = mat.values / row_sums
 
     df_norm = pd.DataFrame(mat_norm, columns=band_names, index=channel_labels(n_channels))
 
-    # Flatten to single row
+    # Flatten matrix to a single row dictionary
     flat = {}
     for ch in df_norm.index:
         for band in band_names:
@@ -60,7 +59,7 @@ def read_and_normalize_features(path):
 
 
 def load_method_data(method_name):
-    """Loads all CSVs for a specific method into a DataFrame."""
+    """Iterates through folders to load all CSVs for a specific method."""
     path = root_feature_dir / method_name
     all_rows = []
     for dirpath, _, filenames in os.walk(path):
@@ -72,76 +71,99 @@ def load_method_data(method_name):
     return pd.DataFrame(all_rows)
 
 
-def main():
-    out_dir.mkdir(parents=True, exist_ok=True)
-    print("Loading and aligning features from all 3 methods...")
-
-    # 1. Load data for all methods
-    data = {}
-    for m in methods:
-        data[m] = load_method_data(m)
-
-    # 2. Find participants/states present in ALL three methods
-    # This is required for the Friedman (paired) test
+def run_friedman_for_scenario(df_stft, df_cwt, df_emd, scenario_label):
+    """Executes Friedman Test and FDR correction for a specific data subset."""
     keys = ["participant_id", "state"]
-    common = pd.merge(data["STFT"][keys], data["CWT"][keys], on=keys)
-    common = pd.merge(common, data["EMD"][keys], on=keys)
-
-    print(f"Found {len(common)} matched records (participant-state pairs) across all methods.")
-
-    # 3. Align the DataFrames
-    df_stft = pd.merge(common, data["STFT"], on=keys).sort_values(keys)
-    df_cwt = pd.merge(common, data["CWT"], on=keys).sort_values(keys)
-    df_emd = pd.merge(common, data["EMD"], on=keys).sort_values(keys)
-
-    # 4. Perform Friedman Test per Feature
     feature_cols = [c for c in df_stft.columns if c not in keys]
     results = []
 
-    print("Applying Friedman Test (Non-parametric ANOVA)...")
+    print(f"Processing Scenario: {scenario_label} (N={len(df_stft)})")
+
     for feat in feature_cols:
-        # Get values for this feature across the 3 methods
         v1 = df_stft[feat].values
         v2 = df_cwt[feat].values
         v3 = df_emd[feat].values
 
         try:
-            # Friedman test compares the distributions of the 3 methods
+            # Friedman test: compares the rank distributions of the 3 methods
             stat, p_val = friedmanchisquare(v1, v2, v3)
-
-            # Descriptive stats for the paper
-            m_stft, m_cwt, m_emd = np.mean(v1), np.mean(v2), np.mean(v3)
-
             results.append({
+                "scenario": scenario_label,
                 "feature": feat,
-                "mean_STFT": m_stft,
-                "mean_CWT": m_cwt,
-                "mean_EMD": m_emd,
+                "mean_STFT": np.mean(v1),
+                "mean_CWT": np.mean(v2),
+                "mean_EMD": np.mean(v3),
                 "chi_square": stat,
                 "p_val": p_val
             })
         except ValueError:
-            # Occurs if all values are identical
+            # Skip if all values are identical (no variance)
             continue
 
-    anova_df = pd.DataFrame(results)
+    if not results:
+        return pd.DataFrame()
 
-    # 5. Multiple Comparison Correction (FDR)
-    if not anova_df.empty:
-        rej, p_fdr = fdrcorrection(anova_df["p_val"], alpha=0.05)
-        anova_df["p_fdr"] = p_fdr
-        anova_df["significant"] = rej
+    res_df = pd.DataFrame(results)
 
-        # 6. Save Results
-        anova_path = out_dir / "Methods_ANOVA_Comparison.csv"
-        anova_df.sort_values("chi_square", ascending=False).to_csv(anova_path, index=False)
-        print(f"ANOVA Analysis Complete. Results saved to: {anova_path}")
+    # Apply Benjamini-Hochberg (FDR) correction
+    rej, p_fdr = fdrcorrection(res_df["p_val"], alpha=0.05)
+    res_df["p_fdr"] = p_fdr
+    res_df["significant"] = rej
 
-        # Count significant differences
-        sig_count = anova_df["significant"].sum()
-        print(f"Out of 95 features, {sig_count} showed a significant difference between methods.")
-    else:
-        print("No valid features found for analysis.")
+    return res_df.sort_values("chi_square", ascending=False)
+
+
+def main():
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Load raw data for all three methods
+    all_data = {m: load_method_data(m) for m in methods}
+
+    # 2. Alignment: Keep only records present in all 3 methods (Paired Data)
+    keys = ["participant_id", "state"]
+    common = pd.merge(all_data["STFT"][keys], all_data["CWT"][keys], on=keys)
+    common = pd.merge(common, all_data["EMD"][keys], on=keys)
+
+    df_stft = pd.merge(common, all_data["STFT"], on=keys).sort_values(keys)
+    df_cwt = pd.merge(common, all_data["CWT"], on=keys).sort_values(keys)
+    df_emd = pd.merge(common, all_data["EMD"], on=keys).sort_values(keys)
+
+    # 3. Run Analysis for 3 distinct scenarios
+    all_scenarios_results = []
+
+    # Scenario 1: Task Only
+    mask_task = df_stft["state"] == "task"
+    res_task = run_friedman_for_scenario(
+        df_stft[mask_task], df_cwt[mask_task], df_emd[mask_task], "Task_Only"
+    )
+    all_scenarios_results.append(res_task)
+
+    # Scenario 2: Rest Only
+    mask_rest = df_stft["state"] == "rest"
+    res_rest = run_friedman_for_scenario(
+        df_stft[mask_rest], df_cwt[mask_rest], df_emd[mask_rest], "Rest_Only"
+    )
+    all_scenarios_results.append(res_rest)
+
+    # Scenario 3: Combined (Rest + Task)
+    res_combined = run_friedman_for_scenario(
+        df_stft, df_cwt, df_emd, "Combined_All"
+    )
+    all_scenarios_results.append(res_combined)
+
+    # 4. Save and Summarize Results
+    final_report = pd.concat(all_scenarios_results, axis=0, ignore_index=True)
+    output_path = out_dir / "Methods_Comparison_Detailed.csv"
+    final_report.to_csv(output_path, index=False)
+
+    print(f"\nAnalysis complete! Results saved to: {output_path}")
+
+    # Print summary of significant features found in each scenario
+    for scen in ["Task_Only", "Rest_Only", "Combined_All"]:
+        sig_count = final_report[
+            (final_report["scenario"] == scen) & (final_report["significant"])
+            ].shape[0]
+        print(f"Significant features in {scen}: {sig_count}/95")
 
 
 if __name__ == "__main__":
