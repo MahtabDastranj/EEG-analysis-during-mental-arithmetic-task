@@ -153,7 +153,7 @@ def main():
 
     # 4. Save and Summarize Results
     final_report = pd.concat(all_scenarios_results, axis=0, ignore_index=True)
-    output_path = out_dir / "Methods_Comparison_Detailed.csv"
+    output_path = out_dir / "Methods_Comparison.csv"
     final_report.to_csv(output_path, index=False)
 
     print(f"\nAnalysis complete! Results saved to: {output_path}")
