@@ -1,147 +1,147 @@
+from pathlib import Path
+import os
+import re
 import pandas as pd
 import numpy as np
-from scipy.stats import friedmanchisquare, wilcoxon
-from pathlib import Path
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-results_file = Path(r"E:\AUT\thesis\files\feature_reduction\Results_MASTER_ALL.csv")
-out_dir = results_file.parent
+from scipy.stats import friedmanchisquare
+from statsmodels.stats.multitest import fdrcorrection
 
 
-def run_sensitivity_comparison(df, group_name):
-    print(f"\n{'=' * 60}")
-    print(f"ANALYZING METHOD SENSITIVITY: {group_name}")
-    print(f"Goal: Compare performance despite different scales (STFT/CWT/EMD)")
-    print(f"{'=' * 60}")
-
-    # 1. Filter Data for this specific Group (e.g., 'Good_Counters')
-    group_df = df[df["group"] == group_name].copy()
-
-    # 2. Pivot the Data
-    # Rows = The specific Brain Feature (e.g., ch01_alpha)
-    # Columns = The 3 Methods (STFT, CWT, EMD)
-    # Values = 'effect_size_r'
-    # CRITICAL STEP: We use Effect Size (0-1) instead of raw amounts
-    # because raw amounts are in different units (Power vs Amplitude vs Ratio).
-    pivot_df = group_df.pivot(index="feature", columns="method", values="effect_size_r")
-
-    # 3. Clean Data
-    # We must drop any feature that wasn't successfully calculated for ALL 3 methods
-    # to ensures a fair paired comparison (Friedman requires this).
-    original_len = len(pivot_df)
-    pivot_df = pivot_df.dropna()
-    print(f"Features included in comparison: {len(pivot_df)}")
-    if original_len != len(pivot_df):
-        print(f"Note: Dropped {original_len - len(pivot_df)} features due to missing data.")
-
-    # 4. Descriptive Stats (Mean Sensitivity)
-    print("\n[Average Sensitivity (Effect Size r)]")
-    # This shows which method is 'strongest' on average
-    print(pivot_df.mean().sort_values(ascending=False))
-
-    # 5. The Friedman Test (Non-Parametric ANOVA for Repeated Measures)
-    # H0: All methods provide the same distribution of sensitivity.
-    stat, p = friedmanchisquare(
-        pivot_df['STFT'],
-        pivot_df['CWT'],
-        pivot_df['EMD']
-    )
-
-    print(f"\n[Friedman Test Results]")
-    print(f"Chi-Square Statistic: {stat:.3f}")
-    print(f"P-Value: {p:.5e}")  # Scientific notation (e.g., 1.2e-05)
-
-    # 6. Post-Hoc Analysis (Only run if Friedman is Significant)
-    if p < 0.05:
-        print("\n>> RESULT: Significant Difference Found! (p < 0.05)")
-        print(">> Performing Pairwise Wilcoxon Tests to find the winner...")
-
-        # We compare every pair: STFT vs CWT, STFT vs EMD, CWT vs EMD
-        pairs = [('STFT', 'CWT'), ('STFT', 'EMD'), ('CWT', 'EMD')]
-
-        # Bonferroni Correction: We are making 3 comparisons, so we divide alpha by 3.
-        # Standard Alpha = 0.05 -> Corrected Alpha = 0.0167
-        alpha_corrected = 0.05 / 3
-        print(f"   (Bonferroni Corrected Significance Threshold: p < {alpha_corrected:.4f})")
-        print("-" * 50)
-
-        for m1, m2 in pairs:
-            # Wilcoxon Signed-Rank Test on the Effect Sizes
-            w_stat, w_p = wilcoxon(pivot_df[m1], pivot_df[m2])
-
-            mean_diff = pivot_df[m1].mean() - pivot_df[m2].mean()
-            winner = m1 if mean_diff > 0 else m2
-
-            is_sig = w_p < alpha_corrected
-
-            sig_label = "SIGNIFICANT" if is_sig else "Not Sig"
-            print(f"   {m1} vs {m2}:")
-            print(f"     p-value: {w_p:.5f} [{sig_label}]")
-            if is_sig:
-                print(f"     >> WINNER: {winner} (Diff: {abs(mean_diff):.3f})")
-            print("-" * 50)
-
-    else:
-        print("\n>> RESULT: No significant difference. All methods are equally sensitive.")
-
-    # 7. Visualization (Violin Plot)
-    # This visualizes the distribution of 'r' values side-by-side
-    plt.figure(figsize=(10, 6))
-
-    # Violin plot shows density; Swarm plot shows actual data points
-    sns.violinplot(data=pivot_df, inner="quartile", palette="muted")
-    sns.swarmplot(data=pivot_df, color="k", size=1.5, alpha=0.5)
-
-    plt.title(f"Method Sensitivity Comparison\nGroup: {group_name}", fontsize=14)
-    plt.ylabel("Effect Size (r)\n(Higher is Better)", fontsize=12)
-    plt.xlabel("Feature Extraction Method", fontsize=12)
-    plt.ylim(0, 1.0)  # r is always between 0 and 1
-
-    # Annotate with Friedman P-value
-    plt.annotate(f"Friedman p = {p:.1e}",
-                 xy=(0.5, 0.95), xycoords='axes fraction',
-                 ha='center', fontsize=10,
-                 bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="black", alpha=0.8))
-
-    # Save Graph
-    save_path = out_dir / f"Method_Comparison_Graph_{group_name}.png"
-    plt.savefig(save_path, dpi=300)
-    print(f"\nGraph saved to: {save_path}")
-    plt.show()
+root_feature_dir = Path(r"E:\AUT\thesis\files\features")
+out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\anova")
+methods = ("STFT", "CWT", "EMD")
+n_channels = 19
+band_names = ["delta", "theta", "alpha", "beta", "gamma"]
 
 
-# ==========================================
-# MAIN EXECUTION
-# ==========================================
+def extract_id(path):
+    """Extracts the 2-digit participant ID from the filename."""
+    stem = Path(path).stem
+    m = re.search(r'(\d{2})', stem)
+    if not m:
+        raise ValueError(f"Cannot extract 2-digit participant id from filename: {stem}")
+    return int(m.group(1))
+
+
+def channel_labels(n):
+    return [f"ch{idx:02d}" for idx in range(1, n + 1)]
+
+
+def read_and_normalize_features(path):
+    """
+    Reads a 19x5 feature file.
+    Normalizes each channel to relative power (sum of bands = 1)
+    to ensure STFT, CWT, and EMD are on the same scale for comparison.
+    """
+    mat = pd.read_csv(path, header=None)
+    if mat.shape != (n_channels, len(band_names)):
+        return None
+
+    # Convert to Relative Power (Important for ANOVA between methods)
+    # Each row (channel) will sum to 1.0
+    row_sums = mat.sum(axis=1).values[:, np.newaxis]
+    row_sums[row_sums == 0] = 1e-12  # Avoid division by zero
+    mat_norm = mat.values / row_sums
+
+    df_norm = pd.DataFrame(mat_norm, columns=band_names, index=channel_labels(n_channels))
+
+    # Flatten to single row
+    flat = {}
+    for ch in df_norm.index:
+        for band in band_names:
+            flat[f"{ch}_{band}"] = float(df_norm.at[ch, band])
+
+    pid = extract_id(path)
+    state = "rest" if "rest" in str(path).lower() else "task"
+
+    row = {"participant_id": pid, "state": state}
+    row.update(flat)
+    return row
+
+
+def load_method_data(method_name):
+    """Loads all CSVs for a specific method into a DataFrame."""
+    path = root_feature_dir / method_name
+    all_rows = []
+    for dirpath, _, filenames in os.walk(path):
+        for fn in filenames:
+            if fn.lower().endswith(".csv"):
+                row = read_and_normalize_features(Path(dirpath) / fn)
+                if row:
+                    all_rows.append(row)
+    return pd.DataFrame(all_rows)
+
+
 def main():
-    if not results_file.exists():
-        print(f"CRITICAL ERROR: File not found at {results_file}")
-        print("Please ensure you run the feature analysis code first to generate Results_MASTER_ALL.csv")
-        return
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print("Loading and aligning features from all 3 methods...")
 
-    print(f"Loading Master Results from: {results_file}")
-    df = pd.read_csv(results_file)
+    # 1. Load data for all methods
+    data = {}
+    for m in methods:
+        data[m] = load_method_data(m)
 
-    # Check what groups exist in the file
-    available_groups = df["group"].unique()
-    print(f"Found Groups: {available_groups}")
+    # 2. Find participants/states present in ALL three methods
+    # This is required for the Friedman (paired) test
+    keys = ["participant_id", "state"]
+    common = pd.merge(data["STFT"][keys], data["CWT"][keys], on=keys)
+    common = pd.merge(common, data["EMD"][keys], on=keys)
 
-    # Run for Good Counters
-    if "Good_Counters" in available_groups:
-        run_sensitivity_comparison(df, "Good_Counters")
-    elif any("Good" in g for g in available_groups):
-        # Fallback search for partial match
-        g_name = next(g for g in available_groups if "Good" in g)
-        run_sensitivity_comparison(df, g_name)
+    print(f"Found {len(common)} matched records (participant-state pairs) across all methods.")
 
-    # Run for Bad Counters
-    if "Bad_Counters" in available_groups:
-        run_sensitivity_comparison(df, "Bad_Counters")
-    elif any("Bad" in g for g in available_groups):
-        # Fallback search for partial match
-        g_name = next(g for g in available_groups if "Bad" in g)
-        run_sensitivity_comparison(df, g_name)
+    # 3. Align the DataFrames
+    df_stft = pd.merge(common, data["STFT"], on=keys).sort_values(keys)
+    df_cwt = pd.merge(common, data["CWT"], on=keys).sort_values(keys)
+    df_emd = pd.merge(common, data["EMD"], on=keys).sort_values(keys)
+
+    # 4. Perform Friedman Test per Feature
+    feature_cols = [c for c in df_stft.columns if c not in keys]
+    results = []
+
+    print("Applying Friedman Test (Non-parametric ANOVA)...")
+    for feat in feature_cols:
+        # Get values for this feature across the 3 methods
+        v1 = df_stft[feat].values
+        v2 = df_cwt[feat].values
+        v3 = df_emd[feat].values
+
+        try:
+            # Friedman test compares the distributions of the 3 methods
+            stat, p_val = friedmanchisquare(v1, v2, v3)
+
+            # Descriptive stats for the paper
+            m_stft, m_cwt, m_emd = np.mean(v1), np.mean(v2), np.mean(v3)
+
+            results.append({
+                "feature": feat,
+                "mean_STFT": m_stft,
+                "mean_CWT": m_cwt,
+                "mean_EMD": m_emd,
+                "chi_square": stat,
+                "p_val": p_val
+            })
+        except ValueError:
+            # Occurs if all values are identical
+            continue
+
+    anova_df = pd.DataFrame(results)
+
+    # 5. Multiple Comparison Correction (FDR)
+    if not anova_df.empty:
+        rej, p_fdr = fdrcorrection(anova_df["p_val"], alpha=0.05)
+        anova_df["p_fdr"] = p_fdr
+        anova_df["significant"] = rej
+
+        # 6. Save Results
+        anova_path = out_dir / "Methods_ANOVA_Comparison.csv"
+        anova_df.sort_values("chi_square", ascending=False).to_csv(anova_path, index=False)
+        print(f"ANOVA Analysis Complete. Results saved to: {anova_path}")
+
+        # Count significant differences
+        sig_count = anova_df["significant"].sum()
+        print(f"Out of 95 features, {sig_count} showed a significant difference between methods.")
+    else:
+        print("No valid features found for analysis.")
 
 
 if __name__ == "__main__":

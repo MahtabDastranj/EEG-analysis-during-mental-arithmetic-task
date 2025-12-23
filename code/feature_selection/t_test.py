@@ -132,7 +132,7 @@ def descriptive_by_feature(merged, base_feats):
         # Positive diff means Task was higher than Rest (Activation/Increase)
         direction = "Task > Rest" if mean_diff > 0 else "Rest > Task" if mean_diff < 0 else "No Change"
 
-        # --- WILCOXON SIGNED-RANK TEST ---
+        # WILCOXON SIGNED-RANK TEST
         wil_stat = np.nan
         p_val = np.nan
         effect_size_r = np.nan
@@ -278,7 +278,7 @@ def main():
         master_df.to_csv(master_path, index=False)
         print(f"File 2 Created: {master_path}")
 
-        # --- SELECTION OF MOST IMPORTANT FEATURES ---
+        #  SELECTION OF MOST IMPORTANT FEATURES
         # We select features with p < 0.05 and a "Large" effect size (r > 0.5)
         # These are the ones that actually distinguish task from rest effectively.
         most_important = master_df[
