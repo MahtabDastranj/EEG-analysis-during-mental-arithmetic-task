@@ -6,19 +6,12 @@ import numpy as np
 from scipy.stats import friedmanchisquare, wilcoxon
 from statsmodels.stats.multitest import fdrcorrection
 
-# =============================================================================
-# PATH CONFIGURATION
-# =============================================================================
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
 out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\anova")
 methods = ("STFT", "CWT", "EMD")
 n_channels = 19
 band_names = ["delta", "theta", "alpha", "beta", "gamma"]
 
-
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
 
 def extract_id(path):
     """Extracts the 2-digit participant ID from the filename."""
@@ -83,10 +76,6 @@ def load_method_data(method_name):
     return pd.DataFrame(all_rows)
 
 
-# =============================================================================
-# STATISTICAL ENGINE (FRIEDMAN + POST-HOC)
-# =============================================================================
-
 def run_friedman_for_scenario(df_stft, df_cwt, df_emd, scenario_label):
     """
     Executes Friedman Test and Post-hoc Wilcoxon comparisons.
@@ -150,10 +139,6 @@ def run_friedman_for_scenario(df_stft, df_cwt, df_emd, scenario_label):
 
     return res_df.sort_values("chi_square", ascending=False)
 
-
-# =============================================================================
-# MAIN EXECUTION
-# =============================================================================
 
 def main():
     out_dir.mkdir(parents=True, exist_ok=True)
