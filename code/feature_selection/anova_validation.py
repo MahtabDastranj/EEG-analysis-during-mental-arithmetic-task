@@ -156,7 +156,7 @@ def main():
             elinewidth=1.5
         )
 
-    plt.title("Method Comparison: Relative Power (Matched to Scenario)", fontsize=16, fontweight='bold')
+    plt.title("Method Comparison: Relative Power", fontsize=16, fontweight='bold')
     plt.ylabel("Relative Power", fontsize=12)
     plt.xlabel("Feature (Scenario)", fontsize=12)
     plt.legend(title="Extraction Method")
