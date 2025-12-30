@@ -100,14 +100,13 @@ def run_statistical_pipeline(df_stft, df_cwt, df_emd, scenario_label):
         if np.all(v1 == v1[0]) and np.all(v2 == v2[0]) and np.all(v3 == v3[0]):
             continue
 
-        # --- STEP 1: Friedman Test (Omnibus) ---
-        # Checks if there is ANY difference among the 3 methods
+        # 1: Friedman Test (Omnibus), Checks if there is ANY difference among the 3 methods
         try:
             stat, p_friedman = friedmanchisquare(v1, v2, v3)
         except ValueError:
             continue
 
-        # --- STEP 2: Post-Hoc Wilcoxon (Pairwise) ---
+        # 2: Post-Hoc Wilcoxon (Pairwise)
         # Only strictly necessary if Friedman is significant, but good to report.
         def get_pval(x, y):
             try:
