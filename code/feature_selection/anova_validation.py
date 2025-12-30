@@ -4,10 +4,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import os
-import re
 import random
 
-# ================= CONFIGURATION =================
 raw_feature_dir = Path(r"E:\AUT\thesis\files\features")
 anova_results_path = Path(r"E:\AUT\thesis\files\feature_reduction\anova\Method_Comparison_Friedman_Results.csv")
 out_dir = Path(r"E:\AUT\thesis\files\viz")
@@ -18,8 +16,6 @@ band_names = ["delta", "theta", "alpha", "beta", "gamma"]
 
 sns.set_theme(style="whitegrid")
 
-
-# =================================================
 
 def channel_labels(n):
     return [f"ch{idx:02d}" for idx in range(1, n + 1)]
@@ -42,13 +38,12 @@ def get_data_for_specific_scenario(method, feature_name, scenario_label):
             if not file.lower().endswith('.csv'):
                 continue
 
-            # --- STRICT FILTERING ---
+            # Task/rest separation
             filename_clean = file.lower()
             if is_task_scenario and "rest" in filename_clean:
                 continue  # We want Task, but this file is Rest -> SKIP
             if not is_task_scenario and "rest" not in filename_clean:
                 continue  # We want Rest, but this file is Task -> SKIP
-            # ------------------------
 
             filepath = Path(root) / file
 
