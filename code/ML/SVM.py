@@ -10,7 +10,6 @@ from sklearn.metrics import confusion_matrix, accuracy_score, precision_recall_f
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-# ================= CONFIGURATION =================
 # Adjust these paths if necessary
 selected_features_path = Path(r"E:\AUT\thesis\files\feature_reduction\unpaired_test\Significant_Features_Detailed.csv")
 labels_csv = Path(r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv')
@@ -86,7 +85,7 @@ def main():
     df_select.columns = [c.lower() for c in df_select.columns]
 
     # CRITICAL: Using top 10 features to prevent overfitting on small N=36 dataset
-    df_select = df_select.head(10)
+    df_select = df_select.head(3)
     print(f"Using Top {len(df_select)} features.")
 
     feature_vectors = []
@@ -108,7 +107,7 @@ def main():
     # --- 2. Grid Search for Hyperparameters ---
     print("\nRunning Grid Search (Finding best C and Gamma)...")
     param_grid = {
-        'C': [0.01, 0.1, 1, 10, 100],
+        'C': [0.01, 0.1, 1, 10],
         'gamma': [1, 0.1, 0.01, 0.001, 'scale'],
         'kernel': ['rbf'], 'class_weight': ['balanced']
     }
@@ -208,7 +207,7 @@ def main():
     plt.ylabel('Actual Label', fontsize=12)
     plt.xlabel('Predicted Label', fontsize=12)
 
-    save_path = out_dir / "Final_Confusion_Matrix.png"
+    save_path = out_dir / "Confusion_Matrix.png"
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
     print(f"\nConfusion Matrix saved to: {save_path}")
