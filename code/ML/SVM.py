@@ -4,12 +4,13 @@ import re
 import pandas as pd
 import numpy as np
 from sklearn.svm import SVC
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+# ================= CONFIGURATION =================
 selected_features_path = Path(r"E:\AUT\thesis\files\feature_reduction\unpaired_test\Significant_Features_Detailed.csv")
 labels_csv = Path(r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv')
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
@@ -31,59 +32,41 @@ def channel_labels(n):
 
 
 def get_labels(labels_csv):
-    """Returns a dictionary: {Participant_ID: Label (0 or 1)}"""
     df = pd.read_csv(labels_csv, header=0)
     col0 = df.iloc[:, 0].astype(str).str.strip()
     pids = col0.str.extract(r'(\d{2})', expand=False).astype(int)
     groups = pd.to_numeric(df.iloc[:, 5], errors="coerce").fillna(-1).astype(int)
-
-    # Filter only valid 0 or 1 labels
     valid_mask = groups.isin([0, 1])
     return dict(zip(pids[valid_mask], groups[valid_mask]))
 
 
 def read_single_feature_vector(method, feature_name):
-    """
-    Loads raw data for ONE specific feature across ALL subjects.
-    Returns a Series: Index=ID, Value=(Task - Rest)
-    """
     method_dir = root_feature_dir / method
     if not method_dir.exists():
-        print(f"Warning: Directory not found {method_dir}")
         return None
 
-    # Storage
     rest_vals = {}
     task_vals = {}
 
-    # Parse Feature Name (e.g., ch01_alpha) to get indices
     try:
         ch_str, band_str = feature_name.split('_')
         ch_idx = int(ch_str.replace('ch', '')) - 1
         band_idx = band_names.index(band_str)
     except:
-        print(f"Error parsing feature name: {feature_name}")
         return None
 
-    # Iterate files
     for root, _, files in os.walk(method_dir):
         for file in files:
             if not file.lower().endswith('.csv'):
                 continue
-
             try:
                 pid = extract_id(file)
-
                 path = Path(root) / file
                 mat = pd.read_csv(path, header=None)
-
                 if mat.shape != (n_channels, len(band_names)):
                     continue
-
-                # Extract Specific Value
                 val = float(mat.iloc[ch_idx, band_idx])
-                log_val = np.log10(val + 1e-12)  # Apply Log Transform
-
+                log_val = np.log10(val + 1e-12)
                 if "rest" in file.lower():
                     rest_vals[pid] = log_val
                 else:
@@ -91,14 +74,10 @@ def read_single_feature_vector(method, feature_name):
             except:
                 continue
 
-    # Calculate Delta (Task - Rest)
-    # Only for participants who have both files
     common_ids = set(rest_vals.keys()).intersection(task_vals.keys())
     delta_data = {}
-
     for pid in common_ids:
         delta_data[pid] = task_vals[pid] - rest_vals[pid]
-
     return pd.Series(delta_data, name=f"{method}_{feature_name}")
 
 
@@ -111,57 +90,38 @@ def main():
         print("Error: Selected features file not found.")
         return
 
-    # Assuming columns are "Method" and "Feature" (or first 2 cols)
     df_select = pd.read_csv(selected_features_path)
-
-    # Normalize column names just in case
     df_select.columns = [c.lower() for c in df_select.columns]
-
-    # Limit to first 15 rows if the file is larger
     df_select = df_select.head(15)
-    print(f"Selected {len(df_select)} features for classification.")
+    print(f"Selected {len(df_select)} features.")
 
-    # 2. Build the X Matrix (Features)
+    # 2. Build X Matrix
     feature_vectors = []
-
     for idx, row in df_select.iterrows():
-        # Handle variations in column naming
         if 'method' in row and 'feature' in row:
             method = row['method']
             feat = row['feature']
         else:
-            # Fallback: Assume col 0 is Method, col 1 is Feature
             method = row.iloc[0]
             feat = row.iloc[1]
-
-        print(f"Loading data for: {method} - {feat}")
         vec = read_single_feature_vector(method, feat)
         if vec is not None:
             feature_vectors.append(vec)
 
     if not feature_vectors:
-        print("No data loaded. Check feature names and paths.")
+        print("No data loaded.")
         return
 
-    # Combine into DataFrame (Indices are Participant IDs)
     X_df = pd.concat(feature_vectors, axis=1)
-
-    # 3. Build the y Vector (Labels)
     label_map = get_labels(labels_csv)
-
-    # Align X and y
-    # Only keep participants who have both Features AND a Label
     valid_ids = [pid for pid in X_df.index if pid in label_map]
 
     X_final = X_df.loc[valid_ids]
-    y_final = [label_map[pid] for pid in valid_ids]
-    y_final = np.array(y_final)
+    y_final = np.array([label_map[pid] for pid in valid_ids])
 
-    print(f"\nFinal Dataset Shape: {X_final.shape}")
     print(f"Class Balance: {np.bincount(y_final)} (0=Bad, 1=Good)")
 
-    # 4. Split Data (Stratified)
-    # stratify=y ensures the ratio of Good/Bad is the same in Train and Test
+    # 3. Stratified Split (80/20)
     X_train, X_test, y_train, y_test = train_test_split(
         X_final, y_final,
         test_size=0.20,
@@ -169,72 +129,54 @@ def main():
         stratify=y_final
     )
 
-    print(f"Train Set: {len(y_train)} samples")
-    print(f"Test Set:  {len(y_test)} samples")
-
-    # 5. Preprocessing (Standard Scaling)
-    # SVM is sensitive to scale. We fit on TRAIN and transform TEST.
+    # 4. Standard Scaling
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # 6. Train Robust SVM
-    # Kernel='rbf' allows for non-linear decision boundaries
-    # C=1.0 is standard regularization
-    svm = SVC(kernel='rbf', C=1.0, gamma='scale', random_state=42)
+    # ================= THE FIX IS HERE =================
+    # class_weight='balanced' automatically adjusts weights
+    # inversely proportional to class frequencies
+    print("Training Balanced SVM...")
+    svm = SVC(
+        kernel='rbf',
+        C=1.0,
+        gamma='scale',
+        class_weight='balanced',  # <--- CRITICAL FIX
+        random_state=42
+    )
     svm.fit(X_train_scaled, y_train)
+    # ===================================================
 
-    # 7. Evaluate
-    # Predict on both sets
+    # 5. Evaluate
     y_train_pred = svm.predict(X_train_scaled)
     y_test_pred = svm.predict(X_test_scaled)
 
-    # Calculate Accuracies
     train_acc = accuracy_score(y_train, y_train_pred)
     test_acc = accuracy_score(y_test, y_test_pred)
 
-    conf_mat = confusion_matrix(y_test, y_test_pred)
-    report = classification_report(y_test, y_test_pred, target_names=['Bad Counters', 'Good Counters'])
-
     print("\n" + "=" * 30)
-    print("      CLASSIFICATION RESULTS")
+    print("      RESULTS (BALANCED)")
     print("=" * 30)
-    print(f"Training Accuracy: {train_acc:.4f} ({train_acc * 100:.1f}%)")
-    print(f"Testing Accuracy:  {test_acc:.4f} ({test_acc * 100:.1f}%)")
-    print("-" * 30)
-    print("\nConfusion Matrix (Test Set):")
-    print(conf_mat)
-    print("\nDetailed Test Report:")
-    print(report)
+    print(f"Train Acc: {train_acc:.2f}")
+    print(f"Test Acc:  {test_acc:.2f}")
 
-    # 8. Visualize Confusion Matrix
-    plt.figure(figsize=(10, 8))
-    plt.subplot(1, 2, 1)
-    sns.heatmap(conf_mat, annot=True, fmt='d', cmap='Blues',
-                xticklabels=['Bad', 'Good'],
-                yticklabels=['Bad', 'Good'])
-    plt.ylabel('Actual')
-    plt.xlabel('Predicted')
-    plt.title(f'SVM Confusion Matrix  of train set (Acc={train_acc:.2f})')
-    save_path = out_dir / "SVM_train_Confusion_Matrix.png"
-    plt.savefig(save_path, dpi=300)
+    # 6. Visualization
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    cms = [confusion_matrix(y_train, y_train_pred), confusion_matrix(y_test, y_test_pred)]
+    titles = [f'Train (Acc={train_acc:.2f})', f'Test (Acc={test_acc:.2f})']
 
-    plt.subplot(1, 2, 2)
-    sns.heatmap(conf_mat, annot=True, fmt='d', cmap='Blues',
-                xticklabels=['Bad', 'Good'],
-                yticklabels=['Bad', 'Good'])
-    plt.ylabel('Actual')
-    plt.xlabel('Predicted')
-    plt.title(f'SVM Confusion Matrix  of test set (Acc={test_acc:.2f})')
-    save_path = out_dir / "SVM_test_Confusion_Matrix.png"
-    plt.savefig(save_path, dpi=300)
+    for i, ax in enumerate(axes):
+        sns.heatmap(cms[i], annot=True, fmt='d', cmap='Blues', cbar=False,
+                    xticklabels=['Bad', 'Good'], yticklabels=['Bad', 'Good'], ax=ax)
+        ax.set_title(titles[i])
+        ax.set_ylabel('Actual')
+        ax.set_xlabel('Predicted')
 
+    plt.tight_layout()
+    plt.savefig(out_dir / "Balanced_SVM_Results.png", dpi=300)
     plt.show()
-    print(f"Plot saved to: {save_path}")
-
-    # Save X and y for record
-    X_final.to_csv(out_dir / "X_matrix_used.csv")
-    pd.DataFrame(y_final, index=X_final.index, columns=["label"]).to_csv(out_dir / "y_labels_used.csv")
+    print("Results saved.")
 
 
 if __name__ == "__main__":
