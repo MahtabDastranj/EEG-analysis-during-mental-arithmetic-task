@@ -4,9 +4,9 @@ import re
 import pandas as pd
 import numpy as np
 from sklearn.svm import SVC
-from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_recall_fscore_support
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 selected_features_path = Path(r"E:\AUT\thesis\files\feature_reduction\unpaired_test\Significant_Features_Detailed.csv")
 labels_csv = Path(r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv')
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
-out_dir = Path(r"E:\AUT\thesis\files\classification\SVM")
+out_dir = Path(r"E:\AUT\thesis\files\classification\SVM_CrossVal")
 n_channels = 19
 band_names = ["delta", "theta", "alpha", "beta", "gamma"]
 
@@ -116,67 +116,108 @@ def main():
     label_map = get_labels(labels_csv)
     valid_ids = [pid for pid in X_df.index if pid in label_map]
 
-    X_final = X_df.loc[valid_ids]
+    X_final = X_df.loc[valid_ids].values
     y_final = np.array([label_map[pid] for pid in valid_ids])
 
-    print(f"Class Balance: {np.bincount(y_final)} (0=Bad, 1=Good)")
+    print(f"Final Dataset: N={len(y_final)} (Bad={np.sum(y_final == 0)}, Good={np.sum(y_final == 1)})")
 
-    # 3. Stratified Split (80/20)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_final, y_final,
-        test_size=0.20,
-        random_state=42,
-        stratify=y_final
-    )
+    # 3. Setup Cross-Validation
+    k_folds = 5
+    skf = StratifiedKFold(n_splits=k_folds, shuffle=True, random_state=42)
 
-    # 4. Standard Scaling
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    # Storage for metrics across folds
+    fold_metrics = {
+        'accuracy': [],
+        'precision_bad': [], 'recall_bad': [], 'f1_bad': [],
+        'precision_good': [], 'recall_good': [], 'f1_good': [],
+        'macro_f1': [],
+        'n_support': []
+    }
 
-    # ================= THE FIX IS HERE =================
-    # class_weight='balanced' automatically adjusts weights
-    # inversely proportional to class frequencies
-    print("Training Balanced SVM...")
-    svm = SVC(
-        kernel='rbf',
-        C=1.0,
-        gamma='scale',
-        class_weight='balanced',  # <--- CRITICAL FIX
-        random_state=42
-    )
-    svm.fit(X_train_scaled, y_train)
-    # ===================================================
+    # Aggregate Confusion Matrix
+    total_cm = np.zeros((2, 2), dtype=int)
 
-    # 5. Evaluate
-    y_train_pred = svm.predict(X_train_scaled)
-    y_test_pred = svm.predict(X_test_scaled)
+    print(f"\nRunning {k_folds}-Fold Cross-Validation...")
+    print("-" * 60)
 
-    train_acc = accuracy_score(y_train, y_train_pred)
-    test_acc = accuracy_score(y_test, y_test_pred)
+    fold_idx = 1
+    for train_index, test_index in skf.split(X_final, y_final):
+        X_train, X_test = X_final[train_index], X_final[test_index]
+        y_train, y_test = y_final[train_index], y_final[test_index]
 
-    print("\n" + "=" * 30)
-    print("      RESULTS (BALANCED)")
-    print("=" * 30)
-    print(f"Train Acc: {train_acc:.2f}")
-    print(f"Test Acc:  {test_acc:.2f}")
+        # Standard Scaling (Fit on Train, Transform Test)
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
 
-    # 6. Visualization
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    cms = [confusion_matrix(y_train, y_train_pred), confusion_matrix(y_test, y_test_pred)]
-    titles = [f'Train (Acc={train_acc:.2f})', f'Test (Acc={test_acc:.2f})']
+        # Train Balanced SVM
+        svm = SVC(kernel='rbf', C=1.0, gamma='scale', class_weight='balanced', random_state=42)
+        svm.fit(X_train_scaled, y_train)
 
-    for i, ax in enumerate(axes):
-        sns.heatmap(cms[i], annot=True, fmt='d', cmap='Blues', cbar=False,
-                    xticklabels=['Bad', 'Good'], yticklabels=['Bad', 'Good'], ax=ax)
-        ax.set_title(titles[i])
-        ax.set_ylabel('Actual')
-        ax.set_xlabel('Predicted')
+        # Predict
+        y_pred = svm.predict(X_test_scaled)
 
-    plt.tight_layout()
-    plt.savefig(out_dir / "Balanced_SVM_Results.png", dpi=300)
+        # Metrics
+        acc = accuracy_score(y_test, y_pred)
+        p, r, f, _ = precision_recall_fscore_support(y_test, y_pred, labels=[0, 1], zero_division=0)
+
+        # Store
+        fold_metrics['accuracy'].append(acc)
+        fold_metrics['precision_bad'].append(p[0])
+        fold_metrics['recall_bad'].append(r[0])
+        fold_metrics['f1_bad'].append(f[0])
+        fold_metrics['precision_good'].append(p[1])
+        fold_metrics['recall_good'].append(r[1])
+        fold_metrics['f1_good'].append(f[1])
+        fold_metrics['macro_f1'].append(np.mean(f))
+        fold_metrics['n_support'].append(np.sum(svm.n_support_))
+
+        # Update Aggregate Confusion Matrix
+        cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
+        total_cm += cm
+
+        print(
+            f"Fold {fold_idx}: Acc={acc:.2f} | Bad F1={f[0]:.2f} | Good F1={f[1]:.2f} | SuppVec={np.sum(svm.n_support_)}")
+        fold_idx += 1
+
+    # 4. Final Reporting
+    print("-" * 60)
+    print("CROSS-VALIDATION RESULTS (Average ± SD)")
+    print("-" * 60)
+
+    def report_stat(name, key):
+        mean_val = np.mean(fold_metrics[key])
+        std_val = np.std(fold_metrics[key])
+        print(f"{name:<20}: {mean_val:.3f} ± {std_val:.3f}")
+
+    report_stat("Accuracy", 'accuracy')
+    report_stat("Macro F1-Score", 'macro_f1')
+    print("--- Class 0 (Bad) ---")
+    report_stat("Precision", 'precision_bad')
+    report_stat("Recall", 'recall_bad')
+    report_stat("F1-Score", 'f1_bad')
+    print("--- Class 1 (Good) ---")
+    report_stat("Precision", 'precision_good')
+    report_stat("Recall", 'recall_good')
+    report_stat("F1-Score", 'f1_good')
+
+    print("-" * 60)
+    avg_support = np.mean(fold_metrics['n_support'])
+    print(f"Avg Support Vectors : {avg_support:.1f} (out of ~{len(y_final) * 0.8:.0f} training samples)")
+    print("Interpretation: Lower is better. If nearly equal to training size, model is overfitting.")
+
+    # 5. Visualize Aggregate Confusion Matrix
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(total_cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=['Bad', 'Good'], yticklabels=['Bad', 'Good'])
+    plt.title(f'Aggregate Confusion Matrix ({k_folds}-Fold CV)')
+    plt.ylabel('Actual Label')
+    plt.xlabel('Predicted Label')
+
+    save_path = out_dir / "CV_Aggregate_ConfusionMatrix.png"
+    plt.savefig(save_path, dpi=300)
     plt.show()
-    print("Results saved.")
+    print(f"\nPlot saved to: {save_path}")
 
 
 if __name__ == "__main__":
