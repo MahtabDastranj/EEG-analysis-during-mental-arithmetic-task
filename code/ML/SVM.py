@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 selected_features_path = Path(r"E:\AUT\thesis\files\feature_reduction\unpaired_test\Significant_Features_Detailed.csv")
 labels_csv = Path(r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv')
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
-out_dir = Path(r"E:\AUT\thesis\files\classification\SVM_Final_Report")
+out_dir = Path(r"E:\AUT\thesis\files\classification")
 n_channels = 19
 band_names = ["delta", "theta", "alpha", "beta", "gamma"]
 
@@ -165,42 +165,38 @@ def main():
         })
         fold_idx += 1
 
-    # --- 4. Print Per-Fold Table ---
+    # Print Per-Fold Table
     df_res = pd.DataFrame(fold_stats)
-    print("\n" + "=" * 65)
-    print("               PER-FOLD PERFORMANCE REPORT")
-    print("=" * 65)
-    print(f"{'Fold':<6} {'Train Acc':<12} {'Test Acc':<12} {'Bad Sens.':<12} {'Supp. Vecs':<12}")
+    print(f"{'Fold':<6} {'Train Acc':<12} {'Test Acc':<12} {'Bad Counters Recall':<12} {'Supp. Vecs':<12}")
     print("-" * 65)
     for _, row in df_res.iterrows():
         print(
             f"{int(row['Fold']):<6} {row['Train_Acc']:.1%}       {row['Test_Acc']:.1%}       {row['Bad_Recall']:.1%}       {int(row['Support_Vecs']):<12}")
     print("-" * 65)
 
-    # --- 5. Final Statistics ---
+    # Final Statistics
     avg_test_acc = df_res['Test_Acc'].mean()
     avg_train_acc = df_res['Train_Acc'].mean()
     gap = avg_train_acc - avg_test_acc
 
-    print(f"\nFINAL SUMMARY:")
     print(f"Average Test Accuracy:  {avg_test_acc:.1%} ± {df_res['Test_Acc'].std():.1%}")
     print(f"Average Train Accuracy: {avg_train_acc:.1%}")
-    print(f"Generalization Gap:     {gap:.1%} (Lower is better)")
+    print(f"Generalization Gap:     {gap:.1%}")
 
-    if gap > 0.15:
-        print(">> WARNING: High Overfitting Risk (Train >> Test). Try reducing C or using fewer features.")
-    else:
-        print(">> STATUS: Model is generalizing well (Robust).")
-
-    # --- 6. Plot Confusion Matrix with Title ---
+    # Confusion Matrix
     plt.figure(figsize=(7, 6))
 
-    # Calculate percentages for annotation
-    # Flatten matrix to get [TN, FP, FN, TP]
+    # Define standard names for the 4 cells
+    # Row 0 = Bad (0), Row 1 = Good (1)
+    # [0,0]=TN, [0,1]=FP, [1,0]=FN, [1,1]=TP
+    group_names = ['TN', 'FP', 'FN', 'TP']
+
+    # Flatten matrix to get values in order [0,0], [0,1], [1,0], [1,1]
     group_counts = ["{0:0.0f}".format(value) for value in total_cm.flatten()]
     group_percentages = ["{0:.1%}".format(value) for value in total_cm.flatten() / np.sum(total_cm)]
 
-    labels = [f"{v1}\n({v2})" for v1, v2 in zip(group_counts, group_percentages)]
+    # Combine all 3 pieces of info into one string per cell
+    labels = [f"{v1}\n{v2}\n({v3})" for v1, v2, v3 in zip(group_names, group_counts, group_percentages)]
     labels = np.asarray(labels).reshape(2, 2)
 
     sns.heatmap(total_cm, annot=labels, fmt='', cmap='Blues',
