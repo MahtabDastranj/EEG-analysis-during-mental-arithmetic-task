@@ -6,15 +6,12 @@ import numpy as np
 from scipy.stats import friedmanchisquare, wilcoxon
 from statsmodels.stats.multitest import fdrcorrection
 
-# ================= CONFIGURATION =================
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
 out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\anova")
 methods = ("STFT", "CWT", "EMD")
 n_channels = 19
 band_names = ["delta", "theta", "alpha", "beta", "gamma"]
 
-
-# =================================================
 
 def extract_id(path):
     """Extracts the 2-digit participant ID from the filename."""
