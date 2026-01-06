@@ -74,7 +74,6 @@ def read_single_feature_vector(method, feature_name):
             try:
                 pid = extract_id(file)
 
-                # Read CSV
                 path = Path(root) / file
                 mat = pd.read_csv(path, header=None)
 
@@ -186,30 +185,50 @@ def main():
     svm.fit(X_train_scaled, y_train)
 
     # 7. Evaluate
-    y_pred = svm.predict(X_test_scaled)
+    # Predict on both sets
+    y_train_pred = svm.predict(X_train_scaled)
+    y_test_pred = svm.predict(X_test_scaled)
 
-    acc = accuracy_score(y_test, y_pred)
-    conf_mat = confusion_matrix(y_test, y_pred)
-    report = classification_report(y_test, y_pred, target_names=['Bad Counters', 'Good Counters'])
+    # Calculate Accuracies
+    train_acc = accuracy_score(y_train, y_train_pred)
+    test_acc = accuracy_score(y_test, y_test_pred)
 
-    print("\n--- CLASSIFICATION RESULTS ---")
-    print(f"Accuracy: {acc:.2f}")
-    print("\nConfusion Matrix:")
+    conf_mat = confusion_matrix(y_test, y_test_pred)
+    report = classification_report(y_test, y_test_pred, target_names=['Bad Counters', 'Good Counters'])
+
+    print("\n" + "=" * 30)
+    print("      CLASSIFICATION RESULTS")
+    print("=" * 30)
+    print(f"Training Accuracy: {train_acc:.4f} ({train_acc * 100:.1f}%)")
+    print(f"Testing Accuracy:  {test_acc:.4f} ({test_acc * 100:.1f}%)")
+    print("-" * 30)
+    print("\nConfusion Matrix (Test Set):")
     print(conf_mat)
-    print("\nReport:")
+    print("\nDetailed Test Report:")
     print(report)
 
     # 8. Visualize Confusion Matrix
-    plt.figure(figsize=(6, 5))
+    plt.figure(figsize=(10, 8))
+    plt.subplot(1, 2, 1)
     sns.heatmap(conf_mat, annot=True, fmt='d', cmap='Blues',
                 xticklabels=['Bad', 'Good'],
                 yticklabels=['Bad', 'Good'])
     plt.ylabel('Actual')
     plt.xlabel('Predicted')
-    plt.title(f'SVM Confusion Matrix (Acc={acc:.2f})')
-
-    save_path = out_dir / "SVM_Confusion_Matrix.png"
+    plt.title(f'SVM Confusion Matrix  of train set (Acc={train_acc:.2f})')
+    save_path = out_dir / "SVM_train_Confusion_Matrix.png"
     plt.savefig(save_path, dpi=300)
+
+    plt.subplot(1, 2, 2)
+    sns.heatmap(conf_mat, annot=True, fmt='d', cmap='Blues',
+                xticklabels=['Bad', 'Good'],
+                yticklabels=['Bad', 'Good'])
+    plt.ylabel('Actual')
+    plt.xlabel('Predicted')
+    plt.title(f'SVM Confusion Matrix  of test set (Acc={test_acc:.2f})')
+    save_path = out_dir / "SVM_test_Confusion_Matrix.png"
+    plt.savefig(save_path, dpi=300)
+
     plt.show()
     print(f"Plot saved to: {save_path}")
 
