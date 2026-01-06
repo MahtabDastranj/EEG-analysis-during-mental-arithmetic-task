@@ -6,17 +6,13 @@ import numpy as np
 from scipy.stats import mannwhitneyu, norm
 from statsmodels.stats.multitest import fdrcorrection
 
-# ================= CONFIGURATION =================
 out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\unpaired_test")
 labels_csv = Path(r'E:\AUT\thesis\EEG-analysis-during-mental-arithmetic-task\subject-info.csv')
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
-
 methods = ("STFT", "CWT", "EMD")
 n_channels = 19
 band_names = ["delta", "theta", "alpha", "beta", "gamma"]
 
-
-# =================================================
 
 def extract_id(path):
     stem = Path(path).stem
