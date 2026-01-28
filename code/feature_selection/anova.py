@@ -192,9 +192,11 @@ nonsig_sample = random.sample(
 )
 
 
-def plot_feature_comparison(feature_list, title):
+def plot_feature_comparison(feature_list, title, filename):
     methods = ["STFT", "CWT", "EMD"]
-    x = np.arange(len(feature_list))
+    n_features = len(feature_list)
+
+    x = np.arange(n_features)
     width = 0.25
 
     plt.figure(figsize=(12, 6))
@@ -211,16 +213,16 @@ def plot_feature_comparison(feature_list, title):
         plt.bar(
             x + i * width,
             means,
-            width,
+            width=width,
             yerr=stds,
             capsize=6,
             label=method
         )
 
     plt.xticks(
-        x + width,
-        feature_list,
-        rotation=25,
+        ticks=x + width,
+        labels=feature_list,
+        rotation=30,
         ha="right"
     )
 
@@ -230,51 +232,16 @@ def plot_feature_comparison(feature_list, title):
     plt.legend(title="Extraction Method")
     plt.grid(axis="y", alpha=0.3)
     plt.tight_layout()
-    plt.show()
+
+    # 💾 Save figure
+    save_path = out_dir / filename
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved figure: {save_path}")
 
 
-def plot_feature_comparison(feature_list, title):
-
-    methods = ["STFT", "CWT", "EMD"]
-    x = np.arange(len(feature_list))
-    width = 0.25
-
-    plt.figure(figsize=(12, 6))
-
-    for i, method in enumerate(methods):
-        means = []
-        stds = []
-
-        for feature in feature_list:
-            values = diffs[method][feature].dropna().values
-            means.append(np.mean(values))
-            stds.append(np.std(values))
-
-        plt.bar(
-            x + i * width,
-            means,
-            width,
-            yerr=stds,
-            capsize=6,
-            label=method
-        )
-
-    plt.xticks(
-        x + width,
-        feature_list,
-        rotation=25,
-        ha="right"
-    )
-
-    plt.ylabel("Task − Rest Relative Power")
-    plt.xlabel("Feature (Channel_Band)")
-    plt.title(title)
-    plt.legend(title="Extraction Method")
-    plt.grid(axis="y", alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
-
-plot_feature_comparison(sig_sample, title="Method Comparison: Significant Features")
-plot_feature_comparison(nonsig_sample,title="Method Comparison: Non-Significant Features")
-
+plot_feature_comparison(sig_sample, title="Method Comparison: Significant Features",
+                        filename="significant_features_comparison.png")
+plot_feature_comparison(nonsig_sample,title="Method Comparison: Non-Significant Features",
+                        filename="nonsignificant_features_comparison.png")
