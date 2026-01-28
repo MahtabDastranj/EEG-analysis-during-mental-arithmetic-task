@@ -119,7 +119,7 @@ diffs = {
 }
 
 features = diffs[methods[0]].columns
-print(f"Number of features: {len(features)}") # Expected: 95
+print(f"Number of features: {len(features)}")  # Expected: 95
 
 # Friedman tests
 results = []
@@ -141,6 +141,8 @@ for i, feature in enumerate(features):
         data[:, 1],
         data[:, 2]
     )
+
+    print(data.shape)
 
     results.append({
         "feature": feature,
@@ -188,6 +190,8 @@ nonsig_sample = random.sample(
     nonsignificant_features,
     min(5, len(nonsignificant_features))
 )
+
+
 def plot_feature_comparison(feature_list, title):
     methods = ["STFT", "CWT", "EMD"]
     x = np.arange(len(feature_list))
@@ -230,6 +234,7 @@ def plot_feature_comparison(feature_list, title):
 
 
 def plot_feature_comparison(feature_list, title):
+
     methods = ["STFT", "CWT", "EMD"]
     x = np.arange(len(feature_list))
     width = 0.25
@@ -271,7 +276,5 @@ def plot_feature_comparison(feature_list, title):
 
 
 plot_feature_comparison(sig_sample, title="Method Comparison: Significant Features")
-
-
 plot_feature_comparison(nonsig_sample,title="Method Comparison: Non-Significant Features")
 
