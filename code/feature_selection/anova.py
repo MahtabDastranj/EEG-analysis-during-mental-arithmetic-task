@@ -8,11 +8,9 @@ from statsmodels.stats.multitest import multipletests
 
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
 out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\anova")
-
 methods = ("STFT", "CWT", "EMD")
 n_channels = 19
 band_names = ["delta", "theta", "alpha", "beta", "gamma"]
-
 out_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -32,6 +30,7 @@ def channel_labels(n):
 def read_and_normalize_features(path):
     """
     Reads feature CSV file and normalizes to Relative Power (row-wise).
+    Obtains relative power across frequency bands for each channel.
     Returns a flat dictionary suitable for DataFrame construction.
     """
     try:
@@ -108,18 +107,10 @@ def compute_task_rest_difference(df):
     return diff
 
 
-# Load data
-
-print("Loading feature data...")
-
 method_dfs = {
     method: load_method_data(method)
     for method in methods
 }
-
-# Compute task - rest for each method
-
-print("Computing task-rest differences...")
 
 diffs = {
     method: compute_task_rest_difference(df)
@@ -128,10 +119,6 @@ diffs = {
 
 features = diffs[methods[0]].columns  # same feature set for all methods
 
-# Friedman test for each feature
-
-print("Running Friedman tests...")
-
 results = []
 
 for feature in features:
@@ -139,7 +126,7 @@ for feature in features:
     data = np.column_stack([
         diffs[method][feature].values
         for method in methods
-    ])  # shape: (participants, 3)
+    ])  # shape: (36 (participants), 3)
 
     # Remove rows with missing values
     valid_mask = ~np.isnan(data).any(axis=1)
