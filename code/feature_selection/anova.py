@@ -15,7 +15,6 @@ out_dir.mkdir(parents=True, exist_ok=True)
 
 
 def extract_id(path):
-    """Extracts the 2-digit participant ID from the filename."""
     stem = Path(path).stem
     m = re.search(r'(\d{2})', stem)
     if not m:
@@ -28,11 +27,6 @@ def channel_labels(n):
 
 
 def read_and_normalize_features(path):
-    """
-    Reads feature CSV file and normalizes to Relative Power (row-wise).
-    Obtains relative power across frequency bands for each channel.
-    Returns a flat dictionary suitable for DataFrame construction.
-    """
     try:
         mat = pd.read_csv(path, header=None)
     except Exception:
@@ -43,7 +37,6 @@ def read_and_normalize_features(path):
 
     mat_values = mat.values.astype(np.float64)
 
-    # Row-wise normalization (Relative Power)
     row_sums = mat_values.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1e-12
     mat_norm = mat_values / row_sums
@@ -72,7 +65,6 @@ def read_and_normalize_features(path):
 
 
 def load_method_data(method_name):
-    """Loads all feature files for one method into a DataFrame."""
     method_path = root_feature_dir / method_name
     rows = []
 
@@ -83,14 +75,13 @@ def load_method_data(method_name):
                 if row is not None:
                     rows.append(row)
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    print(f"[{method_name}] Loaded DataFrame shape: {df.shape}")
+    # Expected: (72 rows, 97 columns) → 36 subjects × 2 states
+    return df
 
 
-def compute_task_rest_difference(df):
-    """
-    Computes task - rest per participant for all features.
-    Output shape: participants × features
-    """
+def compute_task_rest_difference(df, method_name):
     feature_cols = [c for c in df.columns if c not in ("participant_id", "state")]
 
     pivot = df.pivot(
@@ -99,41 +90,49 @@ def compute_task_rest_difference(df):
         values=feature_cols
     )
 
+    print(f"[{method_name}] Pivot table shape: {pivot.shape}")
+    # Expected: (36 participants, 95 features × 2 states)
+
     diff = (
         pivot.xs("task", level=1, axis=1) -
         pivot.xs("rest", level=1, axis=1)
     )
 
+    print(f"[{method_name}] Task–Rest difference shape: {diff.shape}")
+    # Expected: (36 participants, 95 features)
+
     return diff
 
 
+# Load data
 method_dfs = {
     method: load_method_data(method)
     for method in methods
 }
 
+# Task – Rest differences
 diffs = {
-    method: compute_task_rest_difference(df)
+    method: compute_task_rest_difference(df, method)
     for method, df in method_dfs.items()
 }
 
-features = diffs[methods[0]].columns  # same feature set for all methods
+features = diffs[methods[0]].columns
+print(f"Number of features: {len(features)}") # Expected: 95
 
+# Friedman tests
 results = []
-
-for feature in features:
+for i, feature in enumerate(features):
 
     data = np.column_stack([
         diffs[method][feature].values
         for method in methods
-    ])  # shape: (36 (participants), 3)
+    ])
 
-    # Remove rows with missing values
     valid_mask = ~np.isnan(data).any(axis=1)
     data = data[valid_mask]
 
     if data.shape[0] < 10:
-        continue  # insufficient data
+        continue
 
     stat, p_value = friedmanchisquare(
         data[:, 0],
@@ -147,7 +146,10 @@ for feature in features:
         "p_value": p_value
     })
 
+
 results_df = pd.DataFrame(results)
+print(f"Results DataFrame shape: {results_df.shape}")
+# Expected: (95 rows, 3 columns)
 
 results_df["p_fdr"] = multipletests(
     results_df["p_value"],
@@ -160,5 +162,5 @@ results_df["significant"] = results_df["p_fdr"] < 0.05
 output_path = out_dir / "friedman_method_comparison_results.csv"
 results_df.to_csv(output_path, index=False)
 
-print(f"Analysis complete. Results saved to:\n{output_path}")
+print(f"\nAnalysis complete. Results saved to:\n{output_path}")
 print(f"Significant features: {results_df['significant'].sum()} / {len(results_df)}")
