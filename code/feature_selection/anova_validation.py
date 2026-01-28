@@ -7,13 +7,11 @@ import os
 import random
 
 raw_feature_dir = Path(r"E:\AUT\thesis\files\features")
-anova_results_path = Path(r"E:\AUT\thesis\files\feature_reduction\anova\Method_Comparison_Friedman_Results.csv")
-out_dir = Path(r"E:\AUT\thesis\files\viz")
-
+anova_results_path = Path(r"E:\AUT\thesis\files\feature_reduction\anova\friedman_method_comparison_results.csv")
+out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\anova")
 methods = ["STFT", "CWT", "EMD"]
 n_channels = 19
 band_names = ["delta", "theta", "alpha", "beta", "gamma"]
-
 sns.set_theme(style="whitegrid")
 
 

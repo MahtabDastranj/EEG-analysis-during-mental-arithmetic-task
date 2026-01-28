@@ -1,5 +1,7 @@
 import os
 import re
+import matplotlib.pyplot as plt
+import random
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -164,3 +166,112 @@ results_df.to_csv(output_path, index=False)
 
 print(f"\nAnalysis complete. Results saved to:\n{output_path}")
 print(f"Significant features: {results_df['significant'].sum()} / {len(results_df)}")
+
+random.seed(42)
+
+# Get feature lists
+significant_features = results_df.loc[
+    results_df["significant"], "feature"
+].tolist()
+
+nonsignificant_features = results_df.loc[
+    ~results_df["significant"], "feature"
+].tolist()
+
+# Randomly sample 5 features from each group
+sig_sample = random.sample(
+    significant_features,
+    min(5, len(significant_features))
+)
+
+nonsig_sample = random.sample(
+    nonsignificant_features,
+    min(5, len(nonsignificant_features))
+)
+def plot_feature_comparison(feature_list, title):
+    methods = ["STFT", "CWT", "EMD"]
+    x = np.arange(len(feature_list))
+    width = 0.25
+
+    plt.figure(figsize=(12, 6))
+
+    for i, method in enumerate(methods):
+        means = []
+        stds = []
+
+        for feature in feature_list:
+            values = diffs[method][feature].dropna().values
+            means.append(np.mean(values))
+            stds.append(np.std(values))
+
+        plt.bar(
+            x + i * width,
+            means,
+            width,
+            yerr=stds,
+            capsize=6,
+            label=method
+        )
+
+    plt.xticks(
+        x + width,
+        feature_list,
+        rotation=25,
+        ha="right"
+    )
+
+    plt.ylabel("Task − Rest Relative Power")
+    plt.xlabel("Feature (Channel_Band)")
+    plt.title(title)
+    plt.legend(title="Extraction Method")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_feature_comparison(feature_list, title):
+    methods = ["STFT", "CWT", "EMD"]
+    x = np.arange(len(feature_list))
+    width = 0.25
+
+    plt.figure(figsize=(12, 6))
+
+    for i, method in enumerate(methods):
+        means = []
+        stds = []
+
+        for feature in feature_list:
+            values = diffs[method][feature].dropna().values
+            means.append(np.mean(values))
+            stds.append(np.std(values))
+
+        plt.bar(
+            x + i * width,
+            means,
+            width,
+            yerr=stds,
+            capsize=6,
+            label=method
+        )
+
+    plt.xticks(
+        x + width,
+        feature_list,
+        rotation=25,
+        ha="right"
+    )
+
+    plt.ylabel("Task − Rest Relative Power")
+    plt.xlabel("Feature (Channel_Band)")
+    plt.title(title)
+    plt.legend(title="Extraction Method")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+
+plot_feature_comparison(sig_sample, title="Method Comparison: Significant Features")
+
+
+plot_feature_comparison(nonsig_sample,title="Method Comparison: Non-Significant Features")
+
