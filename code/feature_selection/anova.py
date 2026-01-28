@@ -1,16 +1,19 @@
-from pathlib import Path
 import os
 import re
-import pandas as pd
 import numpy as np
-from scipy.stats import friedmanchisquare, wilcoxon
-from statsmodels.stats.multitest import fdrcorrection
+import pandas as pd
+from pathlib import Path
+from scipy.stats import friedmanchisquare
+from statsmodels.stats.multitest import multipletests
 
 root_feature_dir = Path(r"E:\AUT\thesis\files\features")
 out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\anova")
+
 methods = ("STFT", "CWT", "EMD")
 n_channels = 19
 band_names = ["delta", "theta", "alpha", "beta", "gamma"]
+
+out_dir.mkdir(parents=True, exist_ok=True)
 
 
 def extract_id(path):
@@ -28,8 +31,8 @@ def channel_labels(n):
 
 def read_and_normalize_features(path):
     """
-    Reads feature file and normalizes to Relative Power (0-1).
-    Returns a dictionary row for the dataframe.
+    Reads feature CSV file and normalizes to Relative Power (row-wise).
+    Returns a flat dictionary suitable for DataFrame construction.
     """
     try:
         mat = pd.read_csv(path, header=None)
@@ -39,164 +42,136 @@ def read_and_normalize_features(path):
     if mat.shape != (n_channels, len(band_names)):
         return None
 
-    # 1. Normalize to Relative Power (Row-wise)
     mat_values = mat.values.astype(np.float64)
-    row_sums = mat_values.sum(axis=1)[:, np.newaxis]
-    row_sums[row_sums == 0] = 1e-12  # Safety
+
+    # Row-wise normalization (Relative Power)
+    row_sums = mat_values.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1e-12
     mat_norm = mat_values / row_sums
 
-    # 2. Flatten to 1D Row
-    df_norm = pd.DataFrame(mat_norm, columns=band_names, index=channel_labels(n_channels))
+    df_norm = pd.DataFrame(
+        mat_norm,
+        columns=band_names,
+        index=channel_labels(n_channels)
+    )
+
     flat = {}
     for ch in df_norm.index:
         for band in band_names:
-            flat[f"{ch}_{band}"] = float(df_norm.at[ch, band])
+            flat[f"{ch}_{band}"] = float(df_norm.loc[ch, band])
 
-    # 3. Add Metadata
     pid = extract_id(path)
-    # Identify if this is a 'rest' or 'task' file
     state = "rest" if "rest" in str(path).lower() else "task"
 
-    row = {"participant_id": pid, "state": state}
+    row = {
+        "participant_id": pid,
+        "state": state
+    }
     row.update(flat)
+
     return row
 
 
 def load_method_data(method_name):
-    """Loads all files for a specific method into a DataFrame."""
-    path = root_feature_dir / method_name
-    all_rows = []
-    for dirpath, _, filenames in os.walk(path):
+    """Loads all feature files for one method into a DataFrame."""
+    method_path = root_feature_dir / method_name
+    rows = []
+
+    for dirpath, _, filenames in os.walk(method_path):
         for fn in filenames:
             if fn.lower().endswith(".csv"):
                 row = read_and_normalize_features(Path(dirpath) / fn)
-                if row:
-                    all_rows.append(row)
-    return pd.DataFrame(all_rows)
+                if row is not None:
+                    rows.append(row)
+
+    return pd.DataFrame(rows)
 
 
-def run_statistical_pipeline(df_stft, df_cwt, df_emd, scenario_label):
+def compute_task_rest_difference(df):
     """
-    Runs Friedman -> Post-hoc Wilcoxon -> FDR pipeline.
-    Expects 3 inputs of N=36 for each feature.
+    Computes task - rest per participant for all features.
+    Output shape: participants × features
     """
-    # Identify feature columns (excluding metadata)
-    keys = ["participant_id", "state"]
-    feature_cols = [c for c in df_stft.columns if c not in keys]
+    feature_cols = [c for c in df.columns if c not in ("participant_id", "state")]
 
-    results = []
-    print(f"Running Statistics for: {scenario_label} (Subjects: {len(df_stft)})")
+    pivot = df.pivot(
+        index="participant_id",
+        columns="state",
+        values=feature_cols
+    )
 
-    for feat in feature_cols:
-        # Extract the 3 vectors of 36x1
-        v1 = df_stft[feat].values.astype(np.float64)  # STFT vector
-        v2 = df_cwt[feat].values.astype(np.float64)  # CWT vector
-        v3 = df_emd[feat].values.astype(np.float64)  # EMD vector
+    diff = (
+        pivot.xs("task", level=1, axis=1) -
+        pivot.xs("rest", level=1, axis=1)
+    )
 
-        # Safety Check: Skip flat lines (zero variance)
-        if np.all(v1 == v1[0]) and np.all(v2 == v2[0]) and np.all(v3 == v3[0]):
-            continue
-
-        # 1: Friedman Test (Omnibus), Checks if there is ANY difference among the 3 methods
-        try:
-            stat, p_friedman = friedmanchisquare(v1, v2, v3)
-        except ValueError:
-            continue
-
-        # 2: Post-Hoc Wilcoxon (Pairwise)
-        # Only strictly necessary if Friedman is significant, but good to report.
-        def get_pval(x, y):
-            try:
-                # 'two-sided' is standard for "is there a difference?"
-                return wilcoxon(x, y).pvalue
-            except:
-                return 1.0
-
-        p_stft_cwt = get_pval(v1, v2)
-        p_stft_emd = get_pval(v1, v3)
-        p_cwt_emd = get_pval(v2, v3)
-
-        # Store descriptive stats to see WHO is higher/lower
-        results.append({
-            "scenario": scenario_label,
-            "feature": feat,
-            "mean_STFT": np.mean(v1),
-            "mean_CWT": np.mean(v2),
-            "mean_EMD": np.mean(v3),
-            "friedman_stat": stat,
-            "p_friedman": p_friedman,
-            "p_STFT_vs_CWT": p_stft_cwt,
-            "p_STFT_vs_EMD": p_stft_emd,
-            "p_CWT_vs_EMD": p_cwt_emd
-        })
-
-    if not results:
-        return pd.DataFrame()
-
-    res_df = pd.DataFrame(results)
-
-    # 3: FDR Correction ---
-    # We apply FDR to the Friedman P-values to control family-wise error across 95 features
-    reject, p_fdr = fdrcorrection(res_df["p_friedman"], alpha=0.05)
-    res_df["p_friedman_fdr"] = p_fdr
-    res_df["significant"] = reject
-
-    # Sort by the "Disagreement Score" (Friedman Statistic)
-    return res_df.sort_values("friedman_stat", ascending=False)
+    return diff
 
 
-def main():
-    out_dir.mkdir(parents=True, exist_ok=True)
+# Load data
 
-    # 1. Load Data
-    print("Loading data from all methods...")
-    all_data = {m: load_method_data(m) for m in methods}
-    keys = ["participant_id", "state"]
+print("Loading feature data...")
 
-    # 2. Synchronize Data (Ensure we have exactly 36 subjects for ALL methods)
-    # We merge to find the intersection of subjects present in STFT, CWT, and EMD
-    common = pd.merge(all_data["STFT"][keys], all_data["CWT"][keys], on=keys)
-    common = pd.merge(common, all_data["EMD"][keys], on=keys)
+method_dfs = {
+    method: load_method_data(method)
+    for method in methods
+}
 
-    # Filter original dataframes to strictly match the common list
-    df_stft = pd.merge(common, all_data["STFT"], on=keys).sort_values(keys)
-    df_cwt = pd.merge(common, all_data["CWT"], on=keys).sort_values(keys)
-    df_emd = pd.merge(common, all_data["EMD"], on=keys).sort_values(keys)
+# Compute task - rest for each method
 
-    # 3. Define Scenarios (Vectors of 36x1)
-    # We run the test twice: once for Task data, once for Rest data.
-    scenarios = [
-        ("Task_State", df_stft["state"] == "task"),
-        ("Rest_State", df_stft["state"] == "rest")
-    ]
+print("Computing task-rest differences...")
 
-    all_results = []
+diffs = {
+    method: compute_task_rest_difference(df)
+    for method, df in method_dfs.items()
+}
 
-    for label, mask in scenarios:
-        # Filter for the 36 participants in this state
-        sub_stft = df_stft[mask]
-        sub_cwt = df_cwt[mask]
-        sub_emd = df_emd[mask]
+features = diffs[methods[0]].columns  # same feature set for all methods
 
-        if len(sub_stft) == 0:
-            print(f"Skipping {label} (No data found)")
-            continue
+# Friedman test for each feature
 
-        # Run the statistics
-        scenario_res = run_statistical_pipeline(sub_stft, sub_cwt, sub_emd, label)
-        if not scenario_res.empty:
-            all_results.append(scenario_res)
+print("Running Friedman tests...")
 
-    # 4. Save Final Report
-    if all_results:
-        final_df = pd.concat(all_results, axis=0, ignore_index=True)
-        final_path = out_dir / "Method_Comparison_Friedman_Results.csv"
-        final_df.to_csv(final_path, index=False)
-        print(f"\nSUCCESS. Results saved to:\n{final_path}")
-        print("Check 'significant' column to see where methods disagree.")
-    else:
-        print("No results generated.")
+results = []
 
+for feature in features:
 
-if __name__ == "__main__":
-    main()
+    data = np.column_stack([
+        diffs[method][feature].values
+        for method in methods
+    ])  # shape: (participants, 3)
+
+    # Remove rows with missing values
+    valid_mask = ~np.isnan(data).any(axis=1)
+    data = data[valid_mask]
+
+    if data.shape[0] < 10:
+        continue  # insufficient data
+
+    stat, p_value = friedmanchisquare(
+        data[:, 0],
+        data[:, 1],
+        data[:, 2]
+    )
+
+    results.append({
+        "feature": feature,
+        "friedman_statistic": stat,
+        "p_value": p_value
+    })
+
+results_df = pd.DataFrame(results)
+
+results_df["p_fdr"] = multipletests(
+    results_df["p_value"],
+    alpha=0.05,
+    method="fdr_bh"
+)[1]
+
+results_df["significant"] = results_df["p_fdr"] < 0.05
+
+output_path = out_dir / "friedman_method_comparison_results.csv"
+results_df.to_csv(output_path, index=False)
+
+print(f"Analysis complete. Results saved to:\n{output_path}")
+print(f"Significant features: {results_df['significant'].sum()} / {len(results_df)}")

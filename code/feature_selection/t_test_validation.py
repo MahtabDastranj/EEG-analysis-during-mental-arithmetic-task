@@ -4,11 +4,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
-# Path to your file
 csv_path = Path(r"E:\AUT\thesis\files\feature_reduction\unpaired_test\Significant_Features_Detailed.csv")
-# Output folder
 out_dir = Path(r"E:\AUT\thesis\files\feature_reduction\unpaired_test")
-# Number of features per graph
 FEATURES_PER_GRAPH = 5
 
 
