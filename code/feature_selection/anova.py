@@ -29,6 +29,7 @@ def channel_labels(n):
 
 
 def read_and_normalize_features(path):
+    ''' Forms: participant id| state| it 95 normalized channels'''
     try:
         mat = pd.read_csv(path, header=None)
     except Exception:
@@ -39,15 +40,12 @@ def read_and_normalize_features(path):
 
     mat_values = mat.values.astype(np.float64)
 
+    # For each channel, the amount for the 5 frequency bands are scaled to 1 for a better method evaluation
     row_sums = mat_values.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1e-12
     mat_norm = mat_values / row_sums
 
-    df_norm = pd.DataFrame(
-        mat_norm,
-        columns=band_names,
-        index=channel_labels(n_channels)
-    )
+    df_norm = pd.DataFrame(mat_norm, columns=band_names, index=channel_labels(n_channels))
 
     flat = {}
     for ch in df_norm.index:
@@ -95,10 +93,7 @@ def compute_task_rest_difference(df, method_name):
     print(f"[{method_name}] Pivot table shape: {pivot.shape}")
     # Expected: (36 participants, 95 features × 2 states)
 
-    diff = (
-        pivot.xs("task", level=1, axis=1) -
-        pivot.xs("rest", level=1, axis=1)
-    )
+    diff = (pivot.xs("task", level=1, axis=1) - pivot.xs("rest", level=1, axis=1))
 
     print(f"[{method_name}] Task–Rest difference shape: {diff.shape}")
     # Expected: (36 participants, 95 features)
@@ -107,10 +102,7 @@ def compute_task_rest_difference(df, method_name):
 
 
 # Load data
-method_dfs = {
-    method: load_method_data(method)
-    for method in methods
-}
+method_dfs = {method: load_method_data(method) for method in methods}
 
 # Task – Rest differences
 diffs = {
@@ -124,7 +116,6 @@ print(f"Number of features: {len(features)}")  # Expected: 95
 # Friedman tests
 results = []
 for i, feature in enumerate(features):
-
     data = np.column_stack([
         diffs[method][feature].values
         for method in methods
@@ -171,24 +162,14 @@ print(f"Significant features: {results_df['significant'].sum()} / {len(results_d
 random.seed(42)
 
 # Get feature lists
-significant_features = results_df.loc[
-    results_df["significant"], "feature"
-].tolist()
+significant_features = results_df.loc[results_df["significant"], "feature"].tolist()
 
-nonsignificant_features = results_df.loc[
-    ~results_df["significant"], "feature"
-].tolist()
+nonsignificant_features = results_df.loc[~results_df["significant"], "feature"].tolist()
 
 # Randomly sample 5 features from each group
-sig_sample = random.sample(
-    significant_features,
-    min(5, len(significant_features))
-)
+sig_sample = random.sample(significant_features, min(5, len(significant_features)))
 
-nonsig_sample = random.sample(
-    nonsignificant_features,
-    min(5, len(nonsignificant_features))
-)
+nonsig_sample = random.sample(nonsignificant_features, min(5, len(nonsignificant_features)))
 
 
 def plot_feature_comparison(feature_list, title, filename):
