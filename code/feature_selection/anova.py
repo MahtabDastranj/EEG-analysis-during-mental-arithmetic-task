@@ -113,6 +113,15 @@ diffs = {
 features = diffs[methods[0]].columns
 print(f"Number of features: {len(features)}")  # Expected: 95
 
+""" For supervisor"""
+sig_matrix_path = out_dir / "significant_features_values.csv"
+
+# Remove file if it already exists (fresh run)
+if sig_matrix_path.exists():
+    sig_matrix_path.unlink()
+
+write_header = True
+
 # Friedman tests
 results = []
 for i, feature in enumerate(features):
@@ -155,6 +164,30 @@ results_df["significant"] = results_df["p_fdr"] < 0.05
 
 output_path = out_dir / "friedman_method_comparison_results.csv"
 results_df.to_csv(output_path, index=False)
+
+for feature in results_df.loc[results_df["significant"], "feature"]:
+
+    feature_df = pd.DataFrame({
+        "participant_id": diffs["STFT"][feature].index,
+        "STFT": diffs["STFT"][feature].values,
+        "CWT": diffs["CWT"][feature].values,
+        "EMD": diffs["EMD"][feature].values
+    })
+
+    feature_df["feature"] = feature
+    feature_df = feature_df[["feature", "participant_id", "STFT", "CWT", "EMD"]]
+
+    print(f"[APPEND] {feature} → shape {feature_df.shape}")
+    # Expected: (36 rows, 5 columns)
+
+    feature_df.to_csv(
+        sig_matrix_path,
+        mode="a",
+        header=write_header,
+        index=False
+    )
+
+    write_header = False
 
 print(f"\nAnalysis complete. Results saved to:\n{output_path}")
 print(f"Significant features: {results_df['significant'].sum()} / {len(results_df)}")
