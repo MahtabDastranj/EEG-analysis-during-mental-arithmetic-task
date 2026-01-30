@@ -152,8 +152,7 @@ for i, feature in enumerate(features):
 
 
 results_df = pd.DataFrame(results)
-print(f"Results DataFrame shape: {results_df.shape}")
-# Expected: (95 rows, 3 columns)
+print(f"Results DataFrame shape: {results_df.shape}")  # Expected: (95 rows, 3 columns)
 
 results_df["p_fdr"] = multipletests(
     results_df["p_value"],
