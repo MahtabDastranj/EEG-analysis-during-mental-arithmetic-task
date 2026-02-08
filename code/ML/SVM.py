@@ -35,6 +35,7 @@ def get_labels(labels_csv):
 
 
 def read_single_feature_vector(method, feature_name):
+    """Computes task-rest"""
     method_dir = root_feature_dir / method
     if not method_dir.exists(): return None
     rest_vals, task_vals = {}, {}
@@ -62,6 +63,7 @@ def read_single_feature_vector(method, feature_name):
             except:
                 continue
 
+    # Match subjects and compute difference
     common_ids = set(rest_vals.keys()).intersection(task_vals.keys())
     delta_data = {pid: task_vals[pid] - rest_vals[pid] for pid in common_ids}
     return pd.Series(delta_data, name=f"{method}_{feature_name}")
@@ -79,7 +81,7 @@ def main():
     df_select = pd.read_csv(selected_features_path)
     df_select.columns = [c.lower() for c in df_select.columns]
 
-    # CRITICAL: Using top 5 features (User had 3 in snippet, 5 is safer for 36 subjects)
+    # CRITICAL: Using top 5 features
     df_select = df_select.head(5)
     print(f"Using Top {len(df_select)} features.")
 
@@ -91,7 +93,7 @@ def main():
         if vec is not None: feature_vectors.append(vec)
 
     if not feature_vectors: return
-    X_df = pd.concat(feature_vectors, axis=1)
+    X_df = pd.concat(feature_vectors, axis=1)  # rows → participants, columns → selected features
     label_map = get_labels(labels_csv)
     valid_ids = [pid for pid in X_df.index if pid in label_map]
     X_final = X_df.loc[valid_ids].values
@@ -102,13 +104,16 @@ def main():
     # 2. Grid Search
     print("\nRunning Grid Search...")
     param_grid = {
-        'C': [0.01, 0.1, 1, 10],
+        'C': [0.01, 0.1, 1, 10],    # high c leads to complex boundary, higher overfitting risk
+        # high gamma leads to very localized decision boundary, low gamma leads to smoother, global separation
         'gamma': [1, 0.1, 0.01, 0.001, 'scale'],
         'kernel': ['rbf'], 'class_weight': ['balanced']
     }
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_final)
+    # Grid search on all data
     grid = GridSearchCV(SVC(random_state=42), param_grid, refit=True, cv=5, scoring='f1_macro')
+    # Compute F1 for each class and averages it
     grid.fit(X_scaled, y_final)
     best_params = grid.best_params_
     print(f"Best Parameters: {best_params}")
