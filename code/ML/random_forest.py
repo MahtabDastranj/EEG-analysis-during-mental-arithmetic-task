@@ -82,7 +82,7 @@ def main():
     print("Loading Selected Features...")
     df_select = pd.read_csv(selected_features_path)
     df_select.columns = [c.lower() for c in df_select.columns]
-    df_select = df_select.head(5)
+    df_select = df_select.head(7)
     print(f"Using Top {len(df_select)} features.")
 
     feature_vectors = []
@@ -115,7 +115,7 @@ def main():
         'max_depth': [3, 5, 7],
         'min_samples_split': [2, 5],
         'min_samples_leaf': [2, 3, 4],
-        'max_features': ['sqrt', 0.5],
+        'max_features': ['sqrt'],
         'class_weight': ['balanced']
     }
 
