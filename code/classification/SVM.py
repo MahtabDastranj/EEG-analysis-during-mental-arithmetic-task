@@ -80,7 +80,7 @@ def main():
 
     df_select = pd.read_csv(selected_features_path)
     df_select.columns = [c.lower() for c in df_select.columns]
-    df_select = df_select.head(5)
+    df_select = df_select.head(7)
     print(f"Using Top {len(df_select)} features.")
 
     feature_vectors = []
@@ -99,7 +99,7 @@ def main():
 
     print(f"Data Loaded: N={len(y_final)} (Bad={np.sum(y_final == 0)}, Good={np.sum(y_final == 1)})")
 
-    # 2. Grid Search (Inner CV for hyperparameter tuning)
+    # 2. Grid Search (Performed on all data once)
     print("\nRunning Grid Search...")
     param_grid = {
         'C': [0.01, 0.1, 1, 10],
@@ -108,7 +108,6 @@ def main():
         'class_weight': ['balanced']
     }
 
-    # We scale the full data just for the GridSearch step
     scaler_gs = StandardScaler()
     X_scaled_gs = scaler_gs.fit_transform(X_final)
     grid = GridSearchCV(SVC(random_state=42), param_grid, cv=5, scoring='f1_macro')
@@ -123,13 +122,12 @@ def main():
     total_y_test = []
     total_y_pred = []
     train_accuracies = []
+    support_vector_counts = [] # Track SVs per iteration
 
-    # Iterate through every subject
     for train_idx, test_idx in loo.split(X_final):
         X_train, X_test = X_final[train_idx], X_final[test_idx]
         y_train, y_test = y_final[train_idx], y_final[test_idx]
 
-        # SCALE inside the loop to prevent data leakage
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
@@ -137,7 +135,9 @@ def main():
         svm = SVC(**best_params, random_state=42)
         svm.fit(X_train_scaled, y_train)
 
-        # Predict for the single left-out subject
+        # Track the number of support vectors used to define the margin
+        support_vector_counts.append(np.sum(svm.n_support_))
+
         total_y_test.extend(y_test)
         total_y_pred.append(svm.predict(X_test_scaled)[0])
         train_accuracies.append(accuracy_score(y_train, svm.predict(X_train_scaled)))
@@ -145,13 +145,13 @@ def main():
     # 4. Reporting
     avg_test_acc = accuracy_score(total_y_test, total_y_pred)
     avg_train_acc = np.mean(train_accuracies)
-
-    print("\n" + "=" * 45)
-    print(f"{'Metric':<25} {'Value':<10}")
+    mean_sv = np.mean(support_vector_counts)
+    sv_perc = (mean_sv / (len(y_final) - 1)) * 100
     print("-" * 45)
     print(f"{'Average Train Acc':<25} {avg_train_acc:.1%}")
     print(f"{'Average Test Acc (LOSO)':<25} {avg_test_acc:.1%}")
     print(f"{'Generalization Gap':<25} {(avg_train_acc - avg_test_acc):.1%}")
+    print(f"{'Mean Support Vectors':<25} {mean_sv:.1f} ({sv_perc:.1f}%)")
     print("-" * 45)
 
     print("\nDetailed Classification Report:")
@@ -174,7 +174,7 @@ def main():
     plt.ylabel('Actual Label', fontsize=12)
     plt.xlabel('Predicted Label', fontsize=12)
 
-    save_path = out_dir / "Confusion_Matrix_With_Stats.png"
+    save_path = out_dir / "confusion_matrix.png"
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
     print(f"\nMatrix saved to: {save_path}")
