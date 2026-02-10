@@ -166,14 +166,34 @@ def main():
     # CONFUSION MATRIX
     total_cm = confusion_matrix(total_y_test, total_y_pred, labels=[0, 1])
     plt.figure(figsize=(7, 6))
-    sns.heatmap(total_cm, annot=True, fmt='d', cmap='Greens',
-                xticklabels=['Bad (0)', 'Good (1)'], yticklabels=['Bad (0)', 'Good (1)'], cbar=False)
 
-    plt.title(f'Random Forest – LOSO Confusion Matrix\nAccuracy: {avg_test_acc:.1%}', fontweight='bold')
+    group_names = ['TN', 'FP', 'FN', 'TP']
+    group_counts = [f"{v:d}" for v in total_cm.flatten()]
+    group_percentages = [f"{v:.1%}" for v in total_cm.flatten() / total_cm.sum()]
+    labels = [f"{n}\n{c}\n({p})" for n, c, p in zip(group_names, group_counts, group_percentages)]
+    labels = np.asarray(labels).reshape(2, 2)
+
+    sns.heatmap(
+        total_cm,
+        annot=labels,
+        fmt='',
+        cmap='Greens',
+        xticklabels=['Bad (0)', 'Good (1)'],
+        yticklabels=['Bad (0)', 'Good (1)'],
+        cbar=False,
+        annot_kws={"size": 14}
+    )
+
+    plt.title(f'Random Forest – LOSO Confusion Matrix\n Accuracy: {avg_test_acc:.1%}',
+              fontsize=15, fontweight='bold', pad=20)
     plt.ylabel('Actual Label')
     plt.xlabel('Predicted Label')
+
+    save_path = out_dir / "Confusion_Matrix_RF.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
+    print(f"\nMatrix saved to: {save_path}")
 
 if __name__ == "__main__":
     main()
