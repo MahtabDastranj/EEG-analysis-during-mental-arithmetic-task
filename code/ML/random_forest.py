@@ -110,13 +110,14 @@ def main():
     # GRID SEARCH
     print("\nRunning Random Forest Grid Search...")
 
+    # Aggressive regularization for small N
     param_grid = {
-        'n_estimators': [200, 500],  # trees
-        'max_depth': [3, 5, 7],
-        'min_samples_split': [2, 5],
-        'min_samples_leaf': [2, 3, 4],
-        'max_features': ['sqrt'],
-        'class_weight': ['balanced']
+        'n_estimators': [100, 200],
+        'max_depth': [2, 3],  # Strictly limited depth
+        'min_samples_leaf': [5, 8],  # Requires more samples to make a decision
+        'max_features': [2, 3],  # Only look at 2-3 features per split
+        'class_weight': ['balanced'],
+        'ccp_alpha': [0.01, 0.05]  # Complexity pruning (very effective for RF overfitting)
     }
 
     rf_base = RandomForestClassifier(random_state=42, n_jobs=-1)
