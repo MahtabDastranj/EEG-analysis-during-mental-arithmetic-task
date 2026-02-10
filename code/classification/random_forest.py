@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import LeaveOneOut, GridSearchCV
-from sklearn.metrics import (confusion_matrix, accuracy_score, precision_recall_fscore_support, classification_report)
+from sklearn.metrics import (confusion_matrix, accuracy_score, classification_report)
 import seaborn as sns
 import matplotlib.pyplot as plt
 
