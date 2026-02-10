@@ -80,7 +80,7 @@ def main():
 
     df_select = pd.read_csv(selected_features_path)
     df_select.columns = [c.lower() for c in df_select.columns]
-    df_select = df_select.head(4)
+    df_select = df_select.head(5)
     print(f"Using Top {len(df_select)} features.")
 
     feature_vectors = []
